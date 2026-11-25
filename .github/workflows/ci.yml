@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Zero warnings, everywhere.
+  RUSTFLAGS: -D warnings
+
+# Third-party actions are pinned to full commit SHAs (version in the
+# comment); bump them in a reviewed PR.
+jobs:
+  build-test:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust (stable, MSVC)
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Build
+        run: cargo build -p dock -p nopbar-mcp --locked
+
+      - name: Test
+        run: cargo test -p dock -p nopbar-mcp --locked
+
+      - name: Test the setup window
+        run: cargo test -p nopbar-setup --locked
+
+      - name: Third-party notices up to date
+        shell: pwsh
+        run: |
+          cargo fetch --locked
+          ./scripts/notices.ps1 -Check
