@@ -1,0 +1,37 @@
+# Template (docs/release.md). Replace __VERSION__ and __SHA256__ (the hash
+# scripts/package.ps1 -Installer prints). The URL must stay versioned and
+# never change once published (winget checks the hash).
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+PackageIdentifier: NopBar.NopBar
+PackageVersion: __VERSION__
+MinimumOSVersion: 10.0.19045.0
+# The setup window (setup/) around the Inno Setup installer
+# (packaging/inno/nopbar.iss): per user, no admin. Not detected as Inno
+# any more, so the switches winget used to pick for Inno are spelled out;
+# with any switch the setup runs the inner installer as is (no window).
+# Interactive (no switch) shows the setup window.
+InstallerType: exe
+InstallerSwitches:
+  Silent: /SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+  SilentWithProgress: /SP- /SILENT /SUPPRESSMSGBOXES /NORESTART
+  Log: /LOG="<LOGPATH>"
+InstallerSuccessCodes:
+  - 0
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+# The installer writes its own Apps & features entry (no Inno _is1 key).
+ProductCode: NopBar
+AppsAndFeaturesEntries:
+  - DisplayName: NopBar
+    Publisher: nopbard
+    ProductCode: NopBar
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/nopbard/nopbar-releases/releases/download/v__VERSION__/NopBar-__VERSION__-setup.exe
+    InstallerSha256: __SHA256__
+ManifestType: installer
+ManifestVersion: 1.9.0

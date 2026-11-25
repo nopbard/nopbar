@@ -1,0 +1,29 @@
+# Template (docs/release.md).
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json
+PackageIdentifier: NopBar.NopBar
+PackageVersion: __VERSION__
+PackageLocale: en-US
+Publisher: nopbard
+PublisherUrl: https://nopbard.com
+PublisherSupportUrl: https://nopbard.com/nopbar
+PrivacyUrl: https://nopbard.com/nopbar/privacy
+Author: nopbard
+PackageName: NopBar
+PackageUrl: https://nopbard.com/nopbar
+License: GPL-3.0-only
+LicenseUrl: https://www.gnu.org/licenses/gpl-3.0.html
+Copyright: (c) nopbard
+ShortDescription: A free and open-source dock and top bar for Windows.
+Description: |-
+  NopBar adds a Dock with magnification, running indicators, window previews and jump lists,
+  and a top bar with the active app's menus, the system tray, network, volume, battery and
+  clock panels. Native Rust + Win32, near-zero CPU when idle, 42 languages.
+Moniker: nopbar
+Tags:
+  - dock
+  - top-bar
+  - taskbar
+  - launcher
+ReleaseNotesUrl: https://nopbard.com/nopbar
+ManifestType: defaultLocale
+ManifestVersion: 1.9.0

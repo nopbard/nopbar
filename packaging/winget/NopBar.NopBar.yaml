@@ -1,0 +1,8 @@
+# Template: copy to manifests/n/NopBar/NopBar/<version>/ in a fork of
+# microsoft/winget-pkgs and replace __VERSION__ (docs/release.md).
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.9.0.schema.json
+PackageIdentifier: NopBar.NopBar
+PackageVersion: __VERSION__
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.9.0

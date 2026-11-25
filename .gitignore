@@ -1,0 +1,57 @@
+# Build output
+/target
+**/target
+*.pdb
+/dist
+
+# Editors and OS
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Local notes and review bookkeeping
+docs/reviews/*.seen
+/scratch/
+*.scratch.*
+/mod.rs
+
+# Logs, dumps, local config
+*.log
+*.dmp
+.env
+.env.*
+
+# Signing material never belongs in the repo (docs/release.md)
+*.pfx
+*.p12
+*.cer
+*.snk
+metadata.json
+# Update-manifest signing key (scripts/new-signing-key.ps1 keeps it in
+# %USERPROFILE%\.nopbar, outside the repo)
+*.key
+
+# Packages built by hand
+*.msix
+*.appx
+*.zip
+# ...except the test fixture the zip reader is tested with
+!dock/src/autoupdate/testdata/*.zip
+site/nopbar/releases/
+
+# Owner screenshots handed to agents (look, never commit)
+/owner-shot-*.png
+
+# Promo film (promo/README.md): packages, rendered stills and films, and
+# the NopBar pictures its tests write
+/promo/node_modules/
+/promo/out/
+/promo/public/shots/
+
+# Python
+__pycache__/

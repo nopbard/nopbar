@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://github.com/nopbard/nopbar/blob/HEAD/SECURITY.md
+    about: Please report vulnerabilities privately by email (nopbard@gmail.com), not as an issue.
+  - name: Help and FAQ
+    url: https://nopbard.com/nopbar/help
+    about: Setup, safety (getting the taskbar back) and common questions.

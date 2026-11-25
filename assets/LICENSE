@@ -1,0 +1,33 @@
+NopBar design assets: All rights reserved
+
+Copyright (c) 2026 nopbard
+
+These terms cover the NopBar design assets in assets/brand/, assets/devices/,
+assets/readme/, and packaging/inno/wizard/, and the icon embedded from
+dock/res/nopbar.ico. They also cover the gnome artwork in assets/companion/,
+including its animated sprites, expressions, body and hat layers, and effects
+under assets/companion/fx/. These terms apply to NopBar marks and gnome images
+wherever they appear in the repository.
+
+You may use these files only as part of unmodified NopBar builds distributed
+by nopbard, and in articles, reviews or videos that talk about NopBar.
+
+Without written permission from nopbard you may not copy, modify, redistribute
+or use these files, or anything confusingly similar, in other software,
+products, forks or marketing.
+
+NopBar source code is licensed under GPL-3.0-only (see the root LICENSE).
+Replace the reserved gnome artwork, logos, icons, device artwork, and README
+images when distributing a modified version. Use of the NopBar name follows
+TRADEMARKS.md.
+
+Third-party marks under assets/brands/ are subject to their owners' terms
+as described in assets/brands/README.md.
+
+Contact: nopbard@gmail.com
+
+Additional permission under GNU GPL version 3 section 7
+
+The copyright holders of this Program give you additional permission to
+convey the Program combined with the NopBar design assets covered above.
+This permission grants no rights in the design assets themselves.

@@ -1,0 +1,73 @@
+{
+  "name": "Graphite",
+  "mode": "system",
+  "accent": "",
+  "dock": {
+    "material": "solid",
+    "tint": "#222222",
+    "opacity": 1.0,
+    "radius": 20,
+    "border": "#00000000",
+    "highlight": "",
+    "shadows": [
+      { "y": 8, "blur": 18, "color": "#00000057" },
+      { "y": 20, "blur": 40, "color": "#0000005C" }
+    ],
+    "backplate": { "style": "squircle", "fill": "auto" }
+  },
+  "topbar": { "material": "solid", "tint": "#1E1E1E", "opacity": 1.0, "text": "auto" },
+  "popup": { "material": "solid", "tint": "#262626", "opacity": 1.0, "border": "#00000000", "text": "auto" },
+  "indicator": { "color": "#D9D9D9" },
+  "ui": {
+    "radius": { "panel": 20, "card": 12, "tile": 12, "control": 8, "menu": 12, "tip": 8, "sheet": 28, "inner": 4 },
+    "text": "#FFFFFFE6",
+    "dim": "#FFFFFF9E",
+    "faint": "#FFFFFF6B",
+    "tile": "#FFFFFF0F",
+    "border": "#00000000",
+    "menu": "#2A2A2A",
+    "tip": "#303030",
+    "active": "#E6E6E6",
+    "on_active": "#171717",
+    "fill": "#DADADA",
+    "highlight": "",
+    "shadows": [{ "y": 6, "blur": 14, "color": "#0000004D" }, { "y": 16, "blur": 32, "color": "#00000057" }]
+  },
+  "font": { "family": "Segoe UI Variable Text", "size": 13 },
+  "light": {
+    "dock": {
+      "material": "solid",
+      "tint": "#F3F3F3",
+      "opacity": 1.0,
+      "radius": 20,
+      "border": "#00000000",
+      "highlight": "",
+      "shadows": [
+        { "y": 8, "blur": 18, "color": "#0000001F" },
+        { "y": 20, "blur": 40, "color": "#00000029" }
+      ],
+      "backplate": { "style": "squircle", "fill": "auto" }
+    },
+    "topbar": { "material": "solid", "tint": "#F0F0F0", "opacity": 1.0, "text": "auto" },
+    "popup": { "material": "solid", "tint": "#F5F5F5", "opacity": 1.0, "border": "#00000000", "text": "auto" },
+    "indicator": { "color": "#363636" },
+    "ui": {
+      "radius": { "panel": 20, "card": 12, "tile": 12, "control": 8, "menu": 12, "tip": 8, "sheet": 28, "inner": 4 },
+      "text": "#000000E0",
+      "dim": "#00000099",
+      "faint": "#00000073",
+      "tile": "#FFFFFFB3",
+      "border": "#00000000",
+      "menu": "#F8F8F8",
+      "tip": "#FCFCFC",
+      "active": "#272727",
+      "on_active": "#F7F7F7",
+      "fill": "#363636",
+      "highlight": "",
+      "shadows": [
+        { "y": 6, "blur": 14, "color": "#0000001A" },
+        { "y": 16, "blur": 32, "color": "#00000024" }
+      ]
+    }
+  }
+}

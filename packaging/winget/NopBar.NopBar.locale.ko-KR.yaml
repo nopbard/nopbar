@@ -1,0 +1,11 @@
+# Template (docs/release.md).
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.locale.1.9.0.schema.json
+PackageIdentifier: NopBar.NopBar
+PackageVersion: __VERSION__
+PackageLocale: ko-KR
+Publisher: nopbard
+PackageName: NopBar
+License: GPL-3.0-only
+ShortDescription: Windows용 무료 오픈소스 독과 상단 바.
+ManifestType: locale
+ManifestVersion: 1.9.0

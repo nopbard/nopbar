@@ -1,0 +1,80 @@
+{
+  "apps": [
+    {
+      "exe": ["chrome.exe", "msedge.exe", "brave.exe", "whale.exe"],
+      "menus": [
+        { "title": "File", "items": [["New tab", "Ctrl+T"], ["New window", "Ctrl+N"], ["New incognito window", "Ctrl+Shift+N"], ["Reopen closed tab", "Ctrl+Shift+T"], "-", ["Open file…", "Ctrl+O"], ["Save page as…", "Ctrl+S"], "-", ["Print…", "Ctrl+P"], "-", ["Close tab", "Ctrl+W"], ["Close window", "Ctrl+Shift+W"]] },
+        { "title": "Edit", "items": [["Undo", "Ctrl+Z"], ["Redo", "Ctrl+Shift+Z"], "-", ["Cut", "Ctrl+X"], ["Copy", "Ctrl+C"], ["Paste", "Ctrl+V"], ["Paste as plain text", "Ctrl+Shift+V"], ["Select all", "Ctrl+A"], "-", ["Find…", "Ctrl+F"]] },
+        { "title": "View", "items": [["Reload", "Ctrl+R"], ["Hard reload", "Ctrl+Shift+R"], "-", ["Zoom in", "Ctrl+="], ["Zoom out", "Ctrl+-"], ["Actual size", "Ctrl+0"], "-", ["Full screen", "F11"], ["Developer tools", "Ctrl+Shift+I"]] },
+        { "title": "History", "items": [["Back", "Alt+Left"], ["Forward", "Alt+Right"], "-", ["Show full history", "Ctrl+H"], ["Downloads", "Ctrl+J"]] },
+        { "title": "Bookmarks", "items": [["Bookmark this page…", "Ctrl+D"], ["Show bookmarks bar", "Ctrl+Shift+B"], ["Bookmark manager", "Ctrl+Shift+O"]] },
+        { "title": "Tab", "items": [["Next tab", "Ctrl+Tab"], ["Previous tab", "Ctrl+Shift+Tab"], "-", ["Focus address bar", "Ctrl+L"]] }
+      ]
+    },
+    {
+      "exe": ["code.exe", "cursor.exe"],
+      "menus": [
+        { "title": "File", "items": [["New text file", "Ctrl+N"], ["New window", "Ctrl+Shift+N"], "-", ["Open file…", "Ctrl+O"], ["Open folder…", "Ctrl+K Ctrl+O"], "-", ["Save", "Ctrl+S"], ["Save as…", "Ctrl+Shift+S"], ["Save all", "Ctrl+K S"], "-", ["Preferences", "Ctrl+,"], "-", ["Close editor", "Ctrl+W"]] },
+        { "title": "Edit", "items": [["Undo", "Ctrl+Z"], ["Redo", "Ctrl+Y"], "-", ["Cut", "Ctrl+X"], ["Copy", "Ctrl+C"], ["Paste", "Ctrl+V"], "-", ["Find", "Ctrl+F"], ["Replace", "Ctrl+H"], ["Find in files", "Ctrl+Shift+F"], "-", ["Toggle line comment", "Ctrl+/"]] },
+        { "title": "Selection", "items": [["Select all", "Ctrl+A"], ["Add next occurrence", "Ctrl+D"], ["Copy line up", "Shift+Alt+Up"], ["Copy line down", "Shift+Alt+Down"]] },
+        { "title": "View", "items": [["Command palette…", "Ctrl+Shift+P"], ["Go to file…", "Ctrl+P"], "-", ["Explorer", "Ctrl+Shift+E"], ["Search", "Ctrl+Shift+F"], ["Source control", "Ctrl+Shift+G"], ["Extensions", "Ctrl+Shift+X"], "-", ["Toggle sidebar", "Ctrl+B"], ["Terminal", "Ctrl+`"], "-", ["Zoom in", "Ctrl+="], ["Zoom out", "Ctrl+-"]] },
+        { "title": "Go", "items": [["Back", "Alt+Left"], ["Forward", "Alt+Right"], "-", ["Go to definition", "F12"], ["Go to line…", "Ctrl+G"], ["Go to symbol…", "Ctrl+Shift+O"]] },
+        { "title": "Run", "items": [["Start debugging", "F5"], ["Run without debugging", "Ctrl+F5"], ["Stop debugging", "Shift+F5"], "-", ["Toggle breakpoint", "F9"]] },
+        { "title": "Terminal", "items": [["New terminal", "Ctrl+Shift+`"], ["Show terminal", "Ctrl+`"]] }
+      ]
+    },
+    {
+      "exe": ["explorer.exe"],
+      "menus": [
+        { "title": "File", "items": [["New window", "Ctrl+N"], ["New tab", "Ctrl+T"], ["New folder", "Ctrl+Shift+N"], "-", ["Close tab", "Ctrl+W"]] },
+        { "title": "Edit", "items": [["Undo", "Ctrl+Z"], ["Redo", "Ctrl+Y"], "-", ["Cut", "Ctrl+X"], ["Copy", "Ctrl+C"], ["Paste", "Ctrl+V"], ["Select all", "Ctrl+A"], "-", ["Rename", "F2"], ["Delete", "Delete"], ["Properties", "Alt+Enter"]] },
+        { "title": "View", "items": [["Refresh", "F5"], ["Preview pane", "Alt+P"], ["Details pane", "Alt+Shift+P"], "-", ["Search", "Ctrl+E"], ["Go to address bar", "Alt+D"]] },
+        { "title": "Go", "items": [["Back", "Alt+Left"], ["Forward", "Alt+Right"], ["Up to parent folder", "Alt+Up"]] }
+      ]
+    },
+    {
+      "exe": ["windowsterminal.exe", "wt.exe"],
+      "menus": [
+        { "title": "Shell", "items": [["New tab", "Ctrl+Shift+T"], ["New window", "Ctrl+Shift+N"], ["Split pane", "Alt+Shift+D"], "-", ["Close tab", "Ctrl+Shift+W"]] },
+        { "title": "Edit", "items": [["Copy", "Ctrl+Shift+C"], ["Paste", "Ctrl+Shift+V"], ["Find", "Ctrl+Shift+F"]] },
+        { "title": "View", "items": [["Command palette", "Ctrl+Shift+P"], ["Settings", "Ctrl+,"], "-", ["Zoom in", "Ctrl+="], ["Zoom out", "Ctrl+-"], ["Actual size", "Ctrl+0"], "-", ["Full screen", "F11"]] }
+      ]
+    },
+    {
+      "exe": ["notepad.exe"],
+      "menus": [
+        { "title": "File", "items": [["New tab", "Ctrl+N"], ["New window", "Ctrl+Shift+N"], ["Open…", "Ctrl+O"], "-", ["Save", "Ctrl+S"], ["Save as…", "Ctrl+Shift+S"], ["Save all", "Ctrl+Alt+S"], "-", ["Print…", "Ctrl+P"], "-", ["Close tab", "Ctrl+W"]] },
+        { "title": "Edit", "items": [["Undo", "Ctrl+Z"], "-", ["Cut", "Ctrl+X"], ["Copy", "Ctrl+C"], ["Paste", "Ctrl+V"], ["Select all", "Ctrl+A"], "-", ["Find", "Ctrl+F"], ["Replace", "Ctrl+H"], ["Go to…", "Ctrl+G"], "-", ["Time/date", "F5"]] },
+        { "title": "View", "items": [["Zoom in", "Ctrl+="], ["Zoom out", "Ctrl+-"], ["Restore default zoom", "Ctrl+0"]] }
+      ]
+    },
+    {
+      "exe": ["winword.exe", "excel.exe", "powerpnt.exe"],
+      "menus": [
+        { "title": "File", "items": [["New", "Ctrl+N"], ["Open…", "Ctrl+O"], "-", ["Save", "Ctrl+S"], ["Save as…", "F12"], "-", ["Print…", "Ctrl+P"], "-", ["Close", "Ctrl+W"]] },
+        { "title": "Edit", "items": [["Undo", "Ctrl+Z"], ["Redo", "Ctrl+Y"], "-", ["Cut", "Ctrl+X"], ["Copy", "Ctrl+C"], ["Paste", "Ctrl+V"], ["Select all", "Ctrl+A"], "-", ["Find", "Ctrl+F"], ["Replace", "Ctrl+H"]] },
+        { "title": "Format", "items": [["Bold", "Ctrl+B"], ["Italic", "Ctrl+I"], ["Underline", "Ctrl+U"], "-", ["Link…", "Ctrl+K"]] },
+        { "title": "Tools", "items": [["Spelling and grammar", "F7"], ["Collapse or expand the ribbon", "Ctrl+F1"]] }
+      ]
+    },
+    {
+      "exe": ["discord.exe", "slack.exe"],
+      "menus": [
+        { "title": "Edit", "items": [["Undo", "Ctrl+Z"], ["Redo", "Ctrl+Shift+Z"], "-", ["Cut", "Ctrl+X"], ["Copy", "Ctrl+C"], ["Paste", "Ctrl+V"], ["Select all", "Ctrl+A"]] },
+        { "title": "View", "items": [["Quick switcher…", "Ctrl+K"], "-", ["Zoom in", "Ctrl+="], ["Zoom out", "Ctrl+-"], ["Actual size", "Ctrl+0"], "-", ["Reload", "Ctrl+R"]] },
+        { "title": "Go", "items": [["Back", "Alt+Left"], ["Forward", "Alt+Right"], "-", ["Previous channel", "Alt+Up"], ["Next channel", "Alt+Down"]] }
+      ]
+    },
+    {
+      "exe": ["photoshop.exe"],
+      "menus": [
+        { "title": "File", "items": [["New…", "Ctrl+N"], ["Open…", "Ctrl+O"], "-", ["Save", "Ctrl+S"], ["Save as…", "Ctrl+Shift+S"], ["Export as…", "Ctrl+Alt+Shift+W"], "-", ["Close", "Ctrl+W"]] },
+        { "title": "Edit", "items": [["Undo", "Ctrl+Z"], ["Redo", "Ctrl+Shift+Z"], "-", ["Cut", "Ctrl+X"], ["Copy", "Ctrl+C"], ["Paste", "Ctrl+V"], "-", ["Free transform", "Ctrl+T"], ["Fill", "Shift+F5"]] },
+        { "title": "Image", "items": [["Levels…", "Ctrl+L"], ["Curves…", "Ctrl+M"], ["Hue/saturation…", "Ctrl+U"], "-", ["Image size…", "Ctrl+Alt+I"], ["Canvas size…", "Ctrl+Alt+C"]] },
+        { "title": "Layer", "items": [["New layer", "Ctrl+Shift+N"], ["Duplicate layer", "Ctrl+J"], ["Group layers", "Ctrl+G"], ["Merge layers", "Ctrl+E"]] },
+        { "title": "Select", "items": [["Select all", "Ctrl+A"], ["Deselect", "Ctrl+D"], ["Inverse", "Ctrl+Shift+I"]] },
+        { "title": "View", "items": [["Zoom in", "Ctrl+="], ["Zoom out", "Ctrl+-"], ["Fit on screen", "Ctrl+0"], "-", ["Rulers", "Ctrl+R"]] }
+      ]
+    }
+  ]
+}

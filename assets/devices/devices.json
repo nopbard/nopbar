@@ -1,0 +1,177 @@
+{
+ "_note": "Device art for About This PC. light = silver set (A), dark = space-gray set (B). 'screen' = [x0,y0,x1,y1] px of the transparent screen hole; draw the wallpaper there, then the device over it.",
+ "devices": {
+  "laptop-light": {
+   "file": "laptop-light.png",
+   "size": [
+    400,
+    354
+   ],
+   "screen": [
+    36.4,
+    12.5,
+    362.2,
+    212.8
+   ]
+  },
+  "laptop-dark": {
+   "file": "laptop-dark.png",
+   "size": [
+    400,
+    358
+   ],
+   "screen": [
+    39.4,
+    16.5,
+    360.3,
+    210.3
+   ]
+  },
+  "umpc-light": {
+   "file": "umpc-light.png",
+   "size": [
+    400,
+    384
+   ],
+   "screen": [
+    49.0,
+    25.7,
+    349.2,
+    189.2
+   ]
+  },
+  "umpc-dark": {
+   "file": "umpc-dark.png",
+   "size": [
+    400,
+    378
+   ],
+   "screen": [
+    41.0,
+    22.6,
+    357.9,
+    197.7
+   ]
+  },
+  "handheld-light": {
+   "file": "handheld-light.png",
+   "size": [
+    400,
+    199
+   ],
+   "screen": [
+    71.1,
+    18.1,
+    315.3,
+    164.6
+   ]
+  },
+  "handheld-dark": {
+   "file": "handheld-dark.png",
+   "size": [
+    400,
+    204
+   ],
+   "screen": [
+    76.6,
+    23.4,
+    313.9,
+    170.0
+   ]
+  },
+  "tablet-light": {
+   "file": "tablet-light.png",
+   "size": [
+    400,
+    263
+   ],
+   "screen": [
+    21.6,
+    17.1,
+    366.2,
+    236.1
+   ]
+  },
+  "tablet-dark": {
+   "file": "tablet-dark.png",
+   "size": [
+    400,
+    320
+   ],
+   "screen": [
+    44.1,
+    15.5,
+    363.5,
+    214.3
+   ]
+  },
+  "desktop-light": {
+   "file": "desktop-light.png",
+   "size": [
+    400,
+    318
+   ],
+   "screen": [
+    3.2,
+    9.7,
+    390.3,
+    225.6
+   ]
+  },
+  "desktop-dark": {
+   "file": "desktop-dark.png",
+   "size": [
+    400,
+    300
+   ],
+   "screen": [
+    3.5,
+    9.4,
+    388.8,
+    220.8
+   ]
+  },
+  "minipc-light": {
+   "file": "minipc-light.png",
+   "size": [
+    400,
+    246
+   ],
+   "screen": null
+  },
+  "minipc-dark": {
+   "file": "minipc-dark.png",
+   "size": [
+    400,
+    284
+   ],
+   "screen": null
+  },
+  "allinone-light": {
+   "file": "allinone-light.png",
+   "size": [
+    400,
+    334
+   ],
+   "screen": [
+    11.1,
+    12.5,
+    385.0,
+    212.3
+   ]
+  },
+  "allinone-dark": {
+   "file": "allinone-dark.png",
+   "size": [
+    400,
+    335
+   ],
+   "screen": [
+    13.6,
+    13.6,
+    385.3,
+    221.7
+   ]
+  }
+ }
+}

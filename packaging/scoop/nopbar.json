@@ -1,0 +1,32 @@
+{
+    "##": "Template for a Scoop bucket (docs/release.md): replace __VERSION__ and __SHA256__ (scripts/package.ps1 -Zip prints the hash).",
+    "version": "__VERSION__",
+    "description": "A free and open-source dock and top bar for Windows.",
+    "homepage": "https://nopbard.com/nopbar",
+    "license": "GPL-3.0-only",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/nopbard/nopbar-releases/releases/download/v__VERSION__/NopBar-__VERSION__-portable.zip",
+            "hash": "__SHA256__"
+        }
+    },
+    "shortcuts": [
+        [
+            "nopbar.exe",
+            "NopBar"
+        ]
+    ],
+    "pre_uninstall": "if ($cmd -eq 'uninstall') { & \"$dir\\nopbar.exe\" --uninstall --quiet | Out-Null } else { & \"$dir\\nopbar.exe\" --quit | Out-Null }",
+    "notes": "Settings stay in %APPDATA%\\NopBar after uninstall.",
+    "checkver": {
+        "url": "https://nopbard.com/nopbar/version.json",
+        "jsonpath": "$.version"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/nopbard/nopbar-releases/releases/download/v$version/NopBar-$version-portable.zip"
+            }
+        }
+    }
+}

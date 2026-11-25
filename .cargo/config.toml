@@ -1,0 +1,7 @@
+# Static C runtime: nopbar.exe, nopbar-mcp.exe and the setup must start on a
+# clean Windows that has no Visual C++ runtime installed. With the dynamic CRT
+# the setup died at once there (STATUS_DLL_NOT_FOUND, VCRUNTIME140.dll; seen in
+# Windows Sandbox). scripts\package.ps1 refuses an exe that still imports it.
+# Cargo reads this file from the current directory up: build from the repo.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
