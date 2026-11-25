@@ -142,13 +142,24 @@ pub fn place_tools(tip:Point,silhouette:&[Rect],small:bool,work:Rect,forbidden:&
  let (base,diam)=if kind==Kind::Mouse{(80.,34.)}else{(92.,40.)};
  place_diameter(tip,silhouette,small,work,&forbidden,base,diam,expanded,if kind==Kind::Mouse{44.}else{48.},notes,edge)
 }
+/// One placement search's wall-clock budget on the UI thread. Unoptimized
+/// geometry is much slower; release builds enforce the real budget.
+fn ui_budget()->std::time::Duration{std::time::Duration::from_millis(if cfg!(debug_assertions){128}else{8})}
+#[cfg(not(test))]
+fn search_budget()->std::time::Duration{ui_budget()}
+// Tests check placements, not wall time: on a loaded machine (shared CI
+// runners) the UI budget would turn a valid layout into "no placement".
+// The test that measures the budget asks for the real one.
+#[cfg(test)]
+thread_local!{static TEST_BUDGET:std::cell::Cell<Option<std::time::Duration>>=const{std::cell::Cell::new(None)};}
+#[cfg(test)]
+fn search_budget()->std::time::Duration{TEST_BUDGET.with(|b|b.get()).unwrap_or(std::time::Duration::from_secs(10))}
 #[allow(clippy::too_many_arguments)]
 fn place_diameter(tip:Point,shape:&[Rect],small:bool,work:Rect,forbidden:&[Rect],base:f32,diam:f32,expanded:Expanded,satellite_distance:f32,notes:bool,edge:bool)->Option<Layout> {
  // Bound impossible searches on the hook-owning UI thread. Never accept an
  // unsafe candidate when the budget expires; the caller dismisses the fan.
  let started=std::time::Instant::now();
- // Unoptimized geometry is much slower; release builds enforce the UI budget.
- let budget=std::time::Duration::from_millis(if cfg!(debug_assertions){128}else{8});
+ let budget=search_budget();
  let shape_box=shape_bounds(shape);
  let step=if notes{26.}else{32.};
  let base=base.max((diam+10.)/(2.*(step/2_f32).to_radians().sin()));
@@ -252,6 +263,7 @@ pub fn animation(t:f32,index:usize,closing:Option<f32>,enabled:bool)->(f32,f32) 
  #[test] #[ignore="wall-clock UI search budget; run alone"]
  fn placement_worst_case_is_bounded() {
   let work=rect(0.,0.,1000.,800.);let shape=vec![rect(0.,0.,1000.,800.);1000];
+  TEST_BUDGET.with(|b|b.set(Some(ui_budget())));
   let started=std::time::Instant::now();assert!(place(Point{x:500.,y:400.},&shape,false,work,&[work],Kind::Touch,Expanded::Rest).is_none());
   let elapsed=started.elapsed();eprintln!("fan impossible search: {elapsed:?}");assert!(elapsed<std::time::Duration::from_millis(if cfg!(debug_assertions){140}else{12}));
  }
