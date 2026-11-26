@@ -555,7 +555,7 @@ impl News {
         done
     }
 
-    fn next_batch(&self, reminders: bool, now: Instant) -> Vec<&Pending> {
+    fn next_batch(&self, reminders: bool) -> Vec<&Pending> {
         let available = || {
             self.pending.iter().filter(|p| {
                 p.receipt.enabled(reminders)
@@ -693,10 +693,9 @@ impl News {
         &mut self,
         reminders: bool,
         local: i64,
-        now: Instant,
         show: impl FnOnce(Card) -> bool,
     ) -> Option<Shown> {
-        let items = self.next_batch(reminders, now);
+        let items = self.next_batch(reminders);
         let first = items.first()?;
         let (card, read_ids) = if items.len() == 1 {
             (first.card.clone(), vec![first.id])
@@ -888,7 +887,7 @@ impl News {
                 true
             })
         } else {
-            self.show_pending(reminders, local, now, show)
+            self.show_pending(reminders, local, show)
                 .is_some_and(|shown| {
                     card::track_read(shown.read_ids);
                     done.extend(shown.done);
@@ -1481,10 +1480,10 @@ mod tests {
             news.select_delivery(Destination::Slot, now, true, || false, || None),
             Delivery::Slot
         ));
-        assert!(news.show_pending(true, 86400, Instant::now(), |_| false).is_none());
+        assert!(news.show_pending(true, 86400, |_| false).is_none());
         assert_eq!(news.pending.len(), 2);
         let shown = news
-            .show_pending(true, 86400, Instant::now(), |card| {
+            .show_pending(true, 86400, |card| {
                 assert_eq!(card.kind, Kind::Bundle);
                 assert_eq!(card.lines.len(), 2);
                 true
@@ -1494,7 +1493,7 @@ mod tests {
         assert_eq!(shown.read_ids, [1, 2]);
         assert_eq!(news.history.unread(), 2);
         assert!(news
-            .show_pending(true, 86400, Instant::now(), |_| panic!("already shown"))
+            .show_pending(true, 86400, |_| panic!("already shown"))
             .is_none());
     }
 
@@ -1520,7 +1519,7 @@ mod tests {
             });
             assert!(news.poll_toast(86400).is_empty());
             assert_eq!(
-                news.next_batch(true, Instant::now())
+                news.next_batch(true)
                     .iter()
                     .map(|p| p.id)
                     .collect::<Vec<_>>(),
@@ -1539,7 +1538,7 @@ mod tests {
             } else {
                 assert!(ack.is_empty());
                 assert!(news.history.entries.is_empty());
-                assert_eq!(news.next_batch(true, Instant::now())[0].id, 1);
+                assert_eq!(news.next_batch(true)[0].id, 1);
             }
             assert!(news.poll_toast(86400).is_empty());
         }
@@ -1704,7 +1703,7 @@ mod tests {
             Receipt::Reminder(unrelated),
             false,
         ));
-        let items = news.next_batch(true, Instant::now());
+        let items = news.next_batch(true);
         let (card, shown) = batch(&items);
         assert_eq!(card.kind, Kind::Morning);
         assert_eq!(card.lines.last().unwrap().label, "+2");
@@ -1722,8 +1721,8 @@ mod tests {
         assert!(
             matches!(news.history.entries.back().unwrap().1.route, Route::Notes(ref id) if id == "0")
         );
-        assert!(news.next_batch(false, Instant::now()).is_empty());
-        assert_eq!(news.next_batch(true, Instant::now())[0].id, 8);
+        assert!(news.next_batch(false).is_empty());
+        assert_eq!(news.next_batch(true)[0].id, 8);
         assert!(news.deliver(&ids, 86400, &[]).is_empty());
     }
 
@@ -1798,7 +1797,7 @@ mod tests {
             reminder.during_absence = true;
             news.pending.push_back(reminder);
             news.finish_absence();
-            assert_eq!(news.next_batch(true, Instant::now()).len(), if long { 2 } else { 1 });
+            assert_eq!(news.next_batch(true).len(), if long { 2 } else { 1 });
             assert!(news.pending.iter().all(|p| !p.during_absence));
         }
     }
