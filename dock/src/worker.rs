@@ -71,9 +71,8 @@ pub enum Event {
     /// Icon for `key` at `size` px, or None if extraction failed.
     /// `look`: the dock's look it was asked for (icons::reply_stale);
     /// `drawn`: one of the dock's own tiles (icons::Source::Drawn);
-    /// `small`: such a tile drawn by itself at the smaller sides asked for
-    /// where it is drawn differently (icons::drawn_pictures), each its own
-    /// side.
+    /// `small`: pictures prepared for the smaller sides, using a drawn
+    /// tile at that size or a size-specific frame of the bundled icon.
     Icon { key: String, size: i32, look: icons::Appearance, drawn: bool, icon: Option<Icon>, small: Vec<Icon> },
     /// The explorer process we were watching (this pid) exited.
     ExplorerGone(u32),
@@ -609,12 +608,18 @@ fn icon_worker(hwnd: isize, jobs: &mut Jobs<ImageJob>, tx: &EventTx) {
                 // dock's drawn tiles (Launchpad pin, trash, folder stacks)
                 // with light / dark and high contrast: always load fresh
                 // (drawing is quicker than reading anyway).
+                // NopBar's bundled frames also bypass the disk cache.
                 // `size` is the largest the dock draws it; the source is the
                 // largest real frame there is, whatever the size (the dock
                 // draws it to each size it needs with a high-quality filter).
-                let tag = icons::source_tag(&key, size, look.light);
-                let own = icons::drawn_key(&key);
-                let cache = if key.starts_with("::") || own { None } else { icons::cache_path(&key, &tag) };
+                let bundled = icons::is_own_app_icon(&key);
+                let own = !bundled && icons::drawn_key(&key);
+                let cache = if key.starts_with("::") || own || bundled {
+                    None
+                } else {
+                    let tag = icons::source_tag(&key, size, look.light);
+                    icons::cache_path(&key, &tag)
+                };
                 let fresh = cache.as_deref().filter(|p| icons::cache_fresh(&key, p));
                 let mut drawn = false;
                 let mut small = Vec::new();
@@ -623,6 +628,11 @@ fn icon_worker(hwnd: isize, jobs: &mut Jobs<ImageJob>, tx: &EventTx) {
                         icons::log_source(&key, &i, "cached");
                         Some(i)
                     }
+                    None if bundled => icons::own_app_pictures(size.max(1) as u32, &sides).map(|(i, s)| {
+                        icons::log_source(&key, &i, "Bundled");
+                        small = s;
+                        i
+                    }),
                     // The dock's own tiles: also drawn at the smaller
                     // sides they look different at.
                     None => match own.then(|| icons::drawn_pictures(&key, size, &sides, look)).flatten() {

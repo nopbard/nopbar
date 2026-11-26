@@ -3014,11 +3014,11 @@ mod tests {
 
 
     #[test]
-    fn brand_mark_follows_custom_popup_instead_of_mode() {
+    fn panel_uses_custom_popup_tint_instead_of_mode() {
         for (mode, tint, text, expected) in [("dark", "#FFFFFF", "#000000", true), ("light", "#000000", "#FFFFFF", false)] {
             let json = format!(r##"{{"name":"Custom","mode":"{mode}","popup":{{"material":"solid","tint":"{tint}","opacity":1.0,"text":"{text}"}},"ui":{{"dim":"{text}"}}}}"##);
             let t = Theme::from_file_text(&json).unwrap().resolve_fx(&crate::syslook::SysLook { light: mode == "light", ..Default::default() }, false);
-            assert_eq!(crate::gfx::panel_mark_light(&t), expected, "{mode}");
+            assert_eq!(luminance(t.material(Material::Panel)) > 0.179, expected, "{mode}");
         }
     }
 

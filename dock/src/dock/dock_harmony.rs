@@ -41,11 +41,13 @@ struct Scene {
     focus: Option<usize>,
     /// The site's dot indicators and neutral fixtures.
     site: bool,
+    /// Use the All Apps pin in the launcher scene.
+    all_apps: bool,
 }
 
 impl Scene {
     fn rest(icon: f32) -> Scene {
-        Scene { pos: Position::Bottom, icon, count: usize::MAX, hover: None, pressed: None, focus: None, site: false }
+        Scene { pos: Position::Bottom, icon, count: usize::MAX, hover: None, pressed: None, focus: None, site: false, all_apps: false }
     }
 }
 
@@ -72,8 +74,15 @@ fn look_of(sc: &Scene) -> Look {
     Look::from_cfg(&cfg, true)
 }
 
-fn list(sc: &Scene) -> Vec<Option<(&'static str, crate::glyphs::Glyph, &'static str, bool, bool)>> {
-    let all: Vec<_> = promo::items().into_iter().filter(|it| !matches!(it, Some(("trash", ..))) || crate::config::Config::default().dock.show_trash).collect();
+fn list(sc: &Scene) -> Vec<Option<promo::Item>> {
+    let mut all = promo::items();
+    if sc.all_apps {
+        all[0] = Some(("all-apps", promo::Picture::Tile(crate::glyphs::Glyph::Launchpad), crate::i18n::t("launchpad.title"), false, false));
+        if let Some((_, _, name, ..)) = all.iter_mut().flatten().find(|(id, ..)| *id == "globe") {
+            *name = "Alder Browser";
+        }
+    }
+    let all: Vec<_> = all.into_iter().filter(|it| !matches!(it, Some(("trash", ..))) || crate::config::Config::default().dock.show_trash).collect();
     if sc.count >= all.len() {
         return all;
     }
@@ -182,7 +191,7 @@ fn paint_on(cv: &Canvas, stage: &kit::Stage, s: f32, theme: &Theme, light: bool,
     let mut named = None;
     for (i, (it, w)) in items.iter().zip(&widths).enumerate() {
         match it {
-            Some((_, g, name, running, two)) => {
+            Some((_, picture, name, running, two)) => {
                 let r = at(Rect { x: u, y: baseline - w, w: *w, h: *w });
                 let px = (w * s).round().max(8.0) as u32;
                 // Pressed: the icon shrinks around its center.
@@ -190,13 +199,14 @@ fn paint_on(cv: &Canvas, stage: &kit::Stage, s: f32, theme: &Theme, light: bool,
                 let active = *running && *two;
                 cv.fill_rr(rect(r.x - 3.0, r.y - 3.0, r.x + r.w + 3.0, r.y + r.h + 3.0), 4.0, layout::tile_color(theme, sc.hover == Some(i), active));
                 let inset = r.w * (1.0 - press) / 2.0;
-                let tile = crate::glyphs::tile(px, *g, TileLook::new(light, hc_pair).finish(!theme.glass()));
-                let tile = if sc.site && *g != crate::glyphs::Glyph::Mark {
+                let drawn = matches!(picture, promo::Picture::Tile(_));
+                let tile = picture.draw(px, TileLook::new(light, hc_pair).finish(!theme.glass()));
+                let tile = if sc.site && drawn {
                     crate::desklayer::backdrop::saturated(&tile, 0.0)
                 } else {
                     tile
                 };
-                cv.icon_at(&tile, r.x + inset, r.y + inset, r.w * press, look.squircle, 1.0);
+                cv.icon_at(&tile, r.x + inset, r.y + inset, r.w * press, look.squircle && drawn, 1.0);
                 if sc.pressed == Some(i) {
                     if let Some(hl) = theme.focus_outline() {
                         unsafe { crate::gfx::parts::paint_squircle_ring(&cv.dc, &cv.factory, r.x, r.y, r.w, 2.0, hl).unwrap() };
@@ -261,11 +271,20 @@ pub(crate) fn paint_site_dock(
     hovered: bool,
 ) -> RECT {
     let scene = Scene { hover: hovered.then_some(4), site: true, ..Scene::rest(44.0) };
-    let (w, h) = window(&scene);
+    paint_site_dock_scene(cv, stage, theme, wall, s, &scene)
+}
+
+pub(crate) fn paint_site_all_apps_dock(cv: &Canvas, stage: &kit::Stage, theme: &Theme, wall: &kit::GlassWallpaper<'_>, s: f32) {
+    let scene = Scene { hover: Some(2), site: true, all_apps: true, ..Scene::rest(44.0) };
+    paint_site_dock_scene(cv, stage, theme, wall, s, &scene);
+}
+
+fn paint_site_dock_scene(cv: &Canvas, stage: &kit::Stage, theme: &Theme, wall: &kit::GlassWallpaper<'_>, s: f32, scene: &Scene) -> RECT {
+    let (w, h) = window(scene);
     let x = (cv.w as f32 / s - w) / 2.0;
     let y = cv.h as f32 / s - h - 12.0;
     dips(cv, s);
-    paint_on(cv, stage, s, theme, theme.is_light, x, y, &scene, Some(wall));
+    paint_on(cv, stage, s, theme, theme.is_light, x, y, scene, Some(wall));
     RECT { left: (x * s).floor() as i32, top: ((y - GAP) * s).floor() as i32, right: ((x + w) * s).ceil() as i32, bottom: cv.h as i32 }
 }
 
@@ -346,6 +365,18 @@ fn windows_feel_dock() {
     let _l = crate::i18n::test_lock("ko");
     let base = Scene::rest(44.0);
     sheet("windows-dock", "glass", 1.0, &[base, Scene { hover: Some(4), ..base }, Scene { pressed: Some(2), ..base }]);
+}
+
+#[test]
+#[ignore = "writes the bundled icon in the dock at three display scales"]
+fn render_own_icon_dock() {
+    let out = std::env::var_os("NOPBAR_OWN_ICON_RENDER_DIR").expect("own icon render output directory");
+    let _lang = crate::i18n::test_lock("en");
+    kit::with_shot_root(out.into(), || {
+        for (name, scale) in [("dock-100", 1.0), ("dock-150", 1.5), ("dock-200", 2.0)] {
+            sheet(name, "glass", scale, &[Scene::rest(44.0)]);
+        }
+    });
 }
 
 pub(crate) fn render_readme_dock(path: &std::path::Path) {

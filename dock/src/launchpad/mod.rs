@@ -217,7 +217,7 @@ pub fn apps_refreshed() {
 }
 
 #[cfg(test)]
-pub(crate) use view::font_compare;
+pub(crate) use view::{font_compare, paint_site_all_apps};
 
 #[cfg(test)]
 mod tests {

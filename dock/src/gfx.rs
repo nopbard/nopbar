@@ -1484,33 +1484,6 @@ pub unsafe fn draw_glyph(dc: &ID2D1DeviceContext, g: crate::glyphs::Glyph, cx: f
     drawn
 }
 
-/// Select from the resolved panel tint, including user-defined popup colors.
-pub fn panel_mark_light(theme: &crate::theme::Theme) -> bool {
-    crate::theme::luminance(theme.material(crate::theme::Material::Panel)) > 0.179
-}
-
-/// NopBar's gnome mark where draw_glyph would put Glyph::Mark: in its two
-/// colors for the panel's light or dark (glyphs::draw_mark) at `alpha`; in
-/// high contrast, one color, `ink` (the caller's glyph color,
-/// its alpha included).
-pub unsafe fn draw_mark(dc: &ID2D1DeviceContext, theme: &crate::theme::Theme, (cx, cy): (f32, f32), size: f32, ink: D2D1_COLOR_F, alpha: f32) -> Result<()> {
-    if theme.high_contrast {
-        return draw_glyph(dc, crate::glyphs::Glyph::Mark, cx, cy, size, ink);
-    }
-    let light = panel_mark_light(theme);
-    let mut t = windows_numerics::Matrix3x2::default();
-    dc.GetTransform(&mut t);
-    let upright = unmirror_about(t, cx, cy);
-    if upright != t {
-        dc.SetTransform(&upright);
-    }
-    let drawn = crate::glyphs::draw_mark(dc, cx, cy, size, light, alpha);
-    if upright != t {
-        dc.SetTransform(&t);
-    }
-    drawn
-}
-
 /// Pure: transform `t` mirrored back about (`cx`, `cy`) where it mirrors
 /// a plain scale (a negative M11 or M22, no rotation): that point lands
 /// where it did. Any other transform as it is.

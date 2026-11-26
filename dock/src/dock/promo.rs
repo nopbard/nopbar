@@ -16,29 +16,48 @@ use windows_numerics::Vector2;
 use super::{dividers, Look, DOT, DOT_GAP, EDGE_GAP, PAD_AXIS, PAD_CROSS, SEP_W};
 use crate::gfx::promo_kit::{self as kit, col, css, rect, Canvas};
 use crate::glyphs::{Glyph, TileLook};
+use crate::icons::Icon;
 
 /// A tile's picture is this many px a side (the film magnifies them).
 const TILE_PX: u32 = 256;
 /// Room around the bar in the whole-dock picture (DIP).
 const MARGIN: f32 = 24.0;
 
-/// What is on the film's dock: (file name, glyph, its name, running, two
+#[derive(Clone, Copy)]
+pub(crate) enum Picture {
+    NopBar,
+    Tile(Glyph),
+}
+
+impl Picture {
+    pub(crate) fn draw(self, px: u32, look: TileLook) -> Icon {
+        match self {
+            Self::NopBar => crate::icons::own_app_icon(px).expect("bundled NopBar icon"),
+            Self::Tile(glyph) => crate::glyphs::tile(px, glyph, look),
+        }
+    }
+}
+
+pub(super) type Item = (&'static str, Picture, &'static str, bool, bool);
+
+/// What is on the film's dock: (file name, picture, its name, running, two
 /// windows). None: the separator.
-pub(super) fn items() -> Vec<Option<(&'static str, Glyph, &'static str, bool, bool)>> {
+pub(super) fn items() -> Vec<Option<Item>> {
+    use Picture::Tile;
     vec![
-        Some(("mark", Glyph::Mark, kit::say("런치패드", "Launchpad"), false, false)),
-        Some(("folder", Glyph::Folder, kit::say("파일", "Files"), true, true)),
-        Some(("globe", Glyph::Globe, kit::say("브라우저", "Browser"), true, false)),
-        Some(("document", Glyph::Document, kit::say("문서", "Documents"), false, false)),
-        Some(("music", Glyph::Music, kit::say("음악", "Music"), true, false)),
-        Some(("image", Glyph::Image, kit::say("사진", "Photos"), false, false)),
-        Some(("calendar", Glyph::Calendar, kit::say("일정", "Calendar"), false, false)),
-        Some(("terminal", Glyph::Terminal, kit::say("터미널", "Terminal"), true, false)),
-        Some(("calculator", Glyph::Calculator, kit::say("계산기", "Calculator"), false, false)),
-        Some(("gear", Glyph::Gear, kit::say("설정", "Settings"), false, false)),
+        Some(("mark", Picture::NopBar, "NopBar", false, false)),
+        Some(("folder", Tile(Glyph::Folder), kit::say("파일", "Files"), true, true)),
+        Some(("globe", Tile(Glyph::Globe), kit::say("브라우저", "Browser"), true, false)),
+        Some(("document", Tile(Glyph::Document), kit::say("문서", "Documents"), false, false)),
+        Some(("music", Tile(Glyph::Music), kit::say("음악", "Music"), true, false)),
+        Some(("image", Tile(Glyph::Image), kit::say("사진", "Photos"), false, false)),
+        Some(("calendar", Tile(Glyph::Calendar), kit::say("일정", "Calendar"), false, false)),
+        Some(("terminal", Tile(Glyph::Terminal), kit::say("터미널", "Terminal"), true, false)),
+        Some(("calculator", Tile(Glyph::Calculator), kit::say("계산기", "Calculator"), false, false)),
+        Some(("gear", Tile(Glyph::Gear), kit::say("설정", "Settings"), false, false)),
         None,
-        Some(("download", Glyph::Download, kit::say("다운로드", "Downloads"), false, false)),
-        Some(("trash", Glyph::Trash, kit::say("휴지통", "Recycle Bin"), false, false)),
+        Some(("download", Tile(Glyph::Download), kit::say("다운로드", "Downloads"), false, false)),
+        Some(("trash", Tile(Glyph::Trash), kit::say("휴지통", "Recycle Bin"), false, false)),
     ]
 }
 
@@ -65,18 +84,17 @@ pub(crate) fn reserve() -> f32 {
     Look::from_cfg(&crate::config::Config::default().dock, true).icon + PAD_CROSS * 2.0 + EDGE_GAP
 }
 
-/// Every tile the film uses: (file name, glyph, name).
-pub(crate) fn all_tiles() -> Vec<(&'static str, Glyph, &'static str)> {
+/// Every tile the film uses: (file name, picture, name).
+pub(crate) fn all_tiles() -> Vec<(&'static str, Picture, &'static str)> {
     let mut v: Vec<_> = items().into_iter().flatten().map(|(id, g, name, ..)| (id, g, name)).collect();
-    v.extend(extra_tiles());
+    v.extend(extra_tiles().into_iter().map(|(id, glyph, name)| (id, Picture::Tile(glyph), name)));
     v
 }
 
-/// One tile as the dock shows its own: glyphs::tile, cut to the squircle.
-fn tile(folder: &str, id: &str, g: Glyph, light: bool) {
+fn tile(folder: &str, id: &str, picture: Picture, light: bool) {
     let side = TILE_PX as f32;
     let cv = Canvas::at(side, side, 1.0);
-    cv.icon(&crate::glyphs::tile(TILE_PX, g, TileLook::new(light, None)), 0.0, 0.0, side, true);
+    cv.icon(&picture.draw(TILE_PX, TileLook::new(light, None)), 0.0, 0.0, side, matches!(picture, Picture::Tile(_)));
     cv.save(&format!("{folder}/tiles/{id}.png"));
 }
 
@@ -104,8 +122,8 @@ fn whole(folder: &str, light: bool) -> (f32, f32) {
     let mut u = bx + PAD_AXIS;
     for it in &list {
         match it {
-            Some((_, g, _, running, two)) => {
-                cv.icon(&crate::glyphs::tile(px, *g, TileLook::new(light, None)), u, baseline - look.icon, look.icon, look.squircle);
+            Some((_, picture, _, running, two)) => {
+                cv.icon(&picture.draw(px, TileLook::new(light, None)), u, baseline - look.icon, look.icon, look.squircle && matches!(picture, Picture::Tile(_)));
                 if *running {
                     let size = super::indicator_size(look.indicator, false, *two);
                     let x0 = u + (look.icon - size.X) / 2.0;
@@ -139,6 +157,7 @@ fn promo_dock() {
 }
 
 fn dock_pictures() {
+    kit::keep_com();
     let look = Look::from_cfg(&crate::config::Config::default().dock, true);
     let mut looks = serde_json::Map::new();
     let mut size = (0.0, 0.0);

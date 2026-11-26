@@ -6,7 +6,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 
-SCENES = ("desktop", "topbar-island", "quick-settings", "widgets", "dock", "gnome")
+SCENES = ("desktop", "topbar-island", "quick-settings", "widgets", "dock", "gnome", "all-apps")
 LOOKS = ("light", "dark")
 MAX_WEBP_BYTES = 420_000
 

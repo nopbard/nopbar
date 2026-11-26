@@ -2438,18 +2438,11 @@ impl Panel {
                 }
                 None => State::Rest,
             };
-            // Its icon; NopBar's own mark; a plain window where none is read.
+            // The app icon, or a plain window while it is unavailable.
             let ir = app_icon_rect(r);
-            let own = row.hog.procs.iter().any(|p| p.0 == std::process::id());
             match row.hog.icon.as_deref() {
-                Some(icon) if !own => self.icon(dc, icon.0, &icon.1, self.m(ir), a)?,
-                // NopBar itself: its gnome mark in the brand's two colors
-                // (one color, the ink, in high contrast).
-                _ if own => {
-                    let cx = mirror::x(self.rtl, (ir.left + ir.right) / 2.0, 0.0, W);
-                    crate::gfx::draw_mark(dc, &self.theme, (cx, cy), ICON, faded(self.ink(Ink::Secondary, s), a), a)?
-                }
-                _ => self.glyph(dc, Glyph::Window, (ir.left + ir.right) / 2.0, cy, ICON, faded(self.ink(Ink::Secondary, s), a))?,
+                Some(icon) => self.icon(dc, icon.0, &icon.1, self.m(ir), a)?,
+                None => self.glyph(dc, Glyph::Window, (ir.left + ir.right) / 2.0, cy, ICON, faded(self.ink(Ink::Secondary, s), a))?,
             }
             let mut end = r.right - ROW_PAD;
             if i == 0 && list.quit {

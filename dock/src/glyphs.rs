@@ -481,7 +481,7 @@ pub fn parts(g: Glyph) -> Vec<Part> {
             v
         }
         // mark.svg's 1024 box fitted to the grid: 18 high, centered; the hat
-        // and the beard (draw_mark gives each its own color).
+        // and the beard.
         Mark => vec![f(MARK_HAT), f(MARK_BEARD)],
         Terminal => vec![s(rrect(3.0, 4.5, 21.0, 19.5, 2.5)), s("M7.5 9.5l3 2.5-3 2.5"), s("M12.5 15h4")],
         Gamepad => vec![
@@ -850,71 +850,6 @@ pub(crate) unsafe fn provider_logo(
 pub const MARK_HAT: &str = "M6.37 12.93 C6.09 12.8 6.26 12.41 6.47 11.94 C7.38 10.08 8.76 8.14 10.06 6.11 C11.44 3.99 13.04 3 14.68 3 C16.32 3 17.53 3.86 17.83 5.16 C18.13 6.24 17.61 6.93 17.09 6.95 C16.88 6.95 16.81 6.82 16.96 6.58 C17.31 6.02 16.45 4.99 15.58 4.99 C14.68 4.99 13.94 5.59 13.64 6.37 C13.38 7.23 13.81 8.01 14.29 8.7 C15.02 9.95 15.84 11.42 16.14 12.32 C16.27 12.63 16.32 12.8 16.1 12.93 C14.98 12.15 13.68 11.78 12.39 11.72 C12.35 12.41 12 12.73 11.35 12.73 C10.71 12.73 10.4 12.37 10.38 11.72 C8.94 11.78 7.42 12.19 6.37 12.93 Z";
 /// The gnome mark's beard: mark.svg's second path.
 pub const MARK_BEARD: &str = "M6.65 13.62 C6.78 15.09 8.81 16.25 11.27 16.25 C13.73 16.25 15.76 15.09 15.93 13.62 C16.45 14.05 16.58 14.87 16.32 15.91 C15.71 17.68 14.07 19.32 11.91 20.61 C11.53 20.89 11.27 21 10.88 20.78 C8.85 19.75 6.91 18.02 6.3 16.42 C5.87 15.26 6 14.14 6.65 13.62 Z";
-
-/// The gnome mark's two colors (brand, 2026-11-11: one palette for the
-/// icons, the tray and the app; scripts/brand-icons.py MARK): the hat's and
-/// the beard's vertical gradients, (top, bottom) in sRGB, for a `light`
-/// ground or a dark one. A brick hat; the beard the ground's ink (dark
-/// grey on light, light grey on dark). With NopBar's own icon, the only
-/// color in an otherwise achromatic UI.
-pub fn mark_colors(light: bool) -> [([u8; 3], [u8; 3]); 2] {
-    if light {
-        [([0xC9, 0x7B, 0x6E], [0xA0, 0x53, 0x4A]), ([0x69, 0x6A, 0x6F], [0x2F, 0x30, 0x33])]
-    } else {
-        [([0xD8, 0x8A, 0x7C], [0xB0, 0x61, 0x5A]), ([0xF8, 0xF8, 0xF9], [0xC6, 0xC7, 0xCA])]
-    }
-}
-
-/// Draws the gnome mark like `draw(Glyph::Mark, ..)` (same place, size
-/// and snapping) but in its own two colors (mark_colors) for a `light` or
-/// dark ground, at `alpha`. High contrast keeps `draw` in the scheme's
-/// text color: the caller decides.
-pub unsafe fn draw_mark(dc: &ID2D1RenderTarget, cx: f32, cy: f32, size: f32, light: bool, alpha: f32) -> Result<()> {
-    if size <= 0.0 || alpha <= 0.0 {
-        return Ok(());
-    }
-    let mut m = Matrix3x2::default();
-    dc.GetTransform(&mut m);
-    let (mut dpx, mut dpy) = (0.0f32, 0.0f32);
-    dc.GetDpi(&mut dpx, &mut dpy);
-    match placement(&m, dpx, cx, cy, size, 1.0) {
-        Place::Device(fr) => {
-            let d = if dpx > 0.0 { dpx / 96.0 } else { 1.0 };
-            dc.SetTransform(&Matrix3x2 { M11: 1.0 / d, M12: 0.0, M21: 0.0, M22: 1.0 / d, M31: 0.0, M32: 0.0 });
-            let r = render_mark(dc, &fr, light, alpha);
-            dc.SetTransform(&m);
-            r
-        }
-        Place::Local(fr) => render_mark(dc, &fr, light, alpha),
-    }
-}
-
-unsafe fn render_mark(dc: &ID2D1RenderTarget, fr: &Frame, light: bool, alpha: f32) -> Result<()> {
-    use windows::Win32::Graphics::Direct2D::Common::D2D1_GRADIENT_STOP;
-    use windows::Win32::Graphics::Direct2D::{D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES};
-    let factory = dc.GetFactory()?;
-    let col = |c: [u8; 3]| D2D1_COLOR_F { r: c[0] as f32 / 255.0, g: c[1] as f32 / 255.0, b: c[2] as f32 / 255.0, a: 1.0 };
-    for (d, (top, bottom)) in [MARK_HAT, MARK_BEARD].into_iter().zip(mark_colors(light)) {
-        let Some(cmds) = parse(d) else { continue };
-        // The gradient over the part's own box (the SVG's bounding box).
-        let (mut y0, mut y1) = (f32::MAX, f32::MIN);
-        for (pts, _) in flatten(&cmds) {
-            for q in pts {
-                let y = fr.map(q).1;
-                y0 = y0.min(y);
-                y1 = y1.max(y);
-            }
-        }
-        let geom = path_geometry(&factory, cmds, fr, true)?;
-        let stops = [D2D1_GRADIENT_STOP { position: 0.0, color: col(top) }, D2D1_GRADIENT_STOP { position: 1.0, color: col(bottom) }];
-        let coll = dc.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)?;
-        let x = fr.x + 12.0 * fr.k;
-        let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES { startPoint: Vector2 { X: x, Y: y0 }, endPoint: Vector2 { X: x, Y: y1 } };
-        let brush = dc.CreateLinearGradientBrush(&props, Some(&D2D1_BRUSH_PROPERTIES { opacity: alpha.min(1.0), transform: Matrix3x2::identity() }), &coll)?;
-        dc.FillGeometry(&geom, &brush, None);
-    }
-    Ok(())
-}
 
 // ---- placing ------------------------------------------------------------------------
 
@@ -1504,26 +1439,12 @@ mod tests {
     }
 
     #[test]
-    fn the_mark_is_a_hat_over_a_beard_in_the_brand_colors() {
+    fn the_mark_is_a_hat_over_a_beard() {
         // Two parts, the hat wholly above the beard (a gap between them).
         let ys = |d: &str| flatten(&parse(d).unwrap()).into_iter().flat_map(|(pts, _)| pts).fold((f32::MAX, f32::MIN), |(lo, hi), (_, y)| (lo.min(y), hi.max(y)));
         assert_eq!(parts(Glyph::Mark), vec![f(MARK_HAT), f(MARK_BEARD)]);
         let (hat, beard) = (ys(MARK_HAT), ys(MARK_BEARD));
         assert!(hat.1 < beard.0, "{hat:?} {beard:?}");
-        // The same colors as the icons and the tray (scripts/brand-icons.py),
-        // a colored hat and a grey beard darker on light grounds.
-        let script = include_str!("../../scripts/brand-icons.py");
-        let lum = |c: [u8; 3]| 0.2126 * c[0] as f32 + 0.7152 * c[1] as f32 + 0.0722 * c[2] as f32;
-        for light in [true, false] {
-            let [h, b] = mark_colors(light);
-            for c in [h.0, h.1, b.0, b.1] {
-                let hex = format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2]);
-                assert!(script.contains(&hex), "{hex}");
-            }
-            assert!(h.0[0] > h.0[2] + 60, "the hat is brick, not grey");
-            assert!(b.0.iter().max().unwrap() - b.0.iter().min().unwrap() < 10, "the beard is grey");
-            assert_eq!(lum(b.1) < 128.0, light, "the beard reads on its ground");
-        }
     }
 
     #[test]

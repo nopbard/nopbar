@@ -441,7 +441,12 @@ fn info_of(r: &Rank) -> Info {
         Some(p) => crate::apps::display_name(&crate::apps::AppWindow { hwnd: HWND::default(), exe: Some(p.to_lowercase()), aumid: None, pid: 0, started: 0 }),
         None => plain_name(&r.key),
     };
-    let icon = path.as_deref().and_then(load_icon);
+    let icon_key = if r.procs.iter().any(|(pid, _)| *pid == std::process::id()) {
+        Some(crate::icons::NOPBAR_ICON_KEY)
+    } else {
+        path.as_deref()
+    };
+    let icon = icon_key.and_then(load_icon);
     // A miss is kept too, with its time (a closed app may come back; a
     // protected one is not asked about every second).
     let info = Info { name, icon, missed: path.is_none().then_some(now) };
@@ -459,7 +464,7 @@ fn info_of(r: &Rank) -> Info {
 pub type AppIcon = Arc<(u32, Vec<u8>)>;
 
 /// An exe's icon as the panel draws it.
-fn load_icon(path: &str) -> Option<AppIcon> {
+pub(crate) fn load_icon(path: &str) -> Option<AppIcon> {
     crate::icons::load(path, ICON_PX).filter(|i| i.width == i.height && i.pixels.len() == (i.width * i.height * 4) as usize).map(|i| Arc::new((i.width, i.pixels)))
 }
 

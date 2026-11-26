@@ -61,11 +61,10 @@ impl Dock {
     /// in `needs`: at every step from rest to the peak, cut to the squircle
     /// when masked. A smaller step that fails is marked (the next larger
     /// one shows for it, drawn again later); a dress whose peak picture
-    /// fails is left out; None if none was drawn.
+    /// fails is left out.
     /// `big_side`: the peak square (DressCtx::big).
-    /// `drawn`: the look a drawn tile (icons::Source::Drawn) was drawn for;
-    /// `small`: such a tile drawn at smaller sides by itself (step_source).
-    fn draw_pic(&self, img: &icons::Icon, small: &[icons::Icon], info: icons::IconInfo, needs: &[(sharp::Dress, u32)], big_side: u32, drawn: Option<icons::Appearance>) -> Option<views::Pic> {
+    /// `small`: artwork prepared for smaller sides (step_source).
+    fn draw_icon_sizes(&self, img: &icons::Icon, small: &[icons::Icon], needs: &[(sharp::Dress, u32)], big_side: u32) -> Vec<views::PicSize> {
         let mut sizes = Vec::new();
         for &(dress, slot) in needs {
             let sides = sharp::step_sides(slot, big_side, dress == sharp::Dress::Plated);
@@ -84,7 +83,7 @@ impl Dock {
             }
             sizes.push(views::PicSize { dress, slot, steps, failed });
         }
-        (!sizes.is_empty()).then_some(views::Pic { info, sizes, drawn })
+        sizes
     }
 
     /// Whether to ask for an icon again after dress_icon said `fit`: drawn
@@ -393,6 +392,7 @@ impl Dock {
         let current = self.icon_px();
         if let Some(img) = icon.filter(|_| size == current) {
             let info = icons::analyze(&img);
+            let bundled = icons::is_own_app_icon(&k.0);
             let ctx = self.dress_ctx();
             // Drawn for every dress the items showing it need (a system
             // app keeps its shape, another app with the same picture gets
@@ -403,15 +403,17 @@ impl Dock {
                 .items
                 .iter()
                 .filter(|it| matches!(it.kind, Kind::App | Kind::Trash) && self.icon_key(&it.path, &it.id) == k.0)
-                .map(|it| (sharp::dress(squircle, keeps_own_shape(it, drawn), info.coverage), ctx.slot))
+                .map(|it| (sharp::dress(squircle, bundled || keeps_own_shape(it, drawn), info.coverage), ctx.slot))
                 .collect();
             if needs.is_empty() {
-                needs.push((sharp::dress(squircle, false, info.coverage), ctx.slot));
+                needs.push((sharp::dress(squircle, bundled, info.coverage), ctx.slot));
             }
             needs.extend(self.shelf.borrow().drawn_for(&k));
             needs.sort_unstable();
             needs.dedup();
-            if let Some(pic) = self.draw_pic(&img, &small, info, &needs, ctx.big, drawn.then_some(look)) {
+            let sizes = self.draw_icon_sizes(&img, &small, &needs, ctx.big);
+            if !sizes.is_empty() {
+                let pic = views::Pic { info, sizes, drawn: drawn.then_some(look), bundled };
                 if pic.sizes.iter().any(|p| p.failed) {
                     let n = self.rest_fails.entry(k.0.clone()).or_insert(0);
                     if *n == 0 {
@@ -1254,6 +1256,7 @@ impl Dock {
             .icon_overrides
             .get(path)
             .and_then(|rel| crate::config::icon_file(rel))
+            .or_else(|| id.aumid.as_deref().filter(|a| a.eq_ignore_ascii_case(crate::updates::AUMID)).map(|_| icons::NOPBAR_ICON_KEY.into()))
             .or_else(|| id.aumid.as_deref().and_then(crate::webapps::cached).and_then(|w| crate::webapps::icon_key(path, &w)))
             .or_else(|| id.exe.clone().filter(|_| web_path))
             .unwrap_or_else(|| path.to_string())
@@ -1981,8 +1984,7 @@ impl Item {
 }
 
 /// The picture a step `side` px wide is drawn from: the icon thread's own
-/// one of that side if it sent one (a drawn tile looks different there:
-/// icons::drawn_pictures), else the peak's `img`, shrunk.
+/// one of that side if it sent one, else the peak's `img`, shrunk.
 pub(super) fn step_source<'a>(side: u32, img: &'a icons::Icon, small: &'a [icons::Icon]) -> &'a icons::Icon {
     small.iter().find(|i| i.width == side && i.height == side).unwrap_or(img)
 }
@@ -2056,7 +2058,7 @@ pub(super) enum Fit {
 /// slot; without them, the closest are shown until they are drawn.
 pub(super) fn dress_icon(x: &DressCtx, it: &mut Item, pic: &views::Pic) -> Fit {
     let c = &x.c;
-    let d = sharp::dress(x.squircle, keeps_own_shape(it, pic.drawn.is_some()), pic.info.coverage);
+    let d = sharp::dress(x.squircle, pic.bundled || keeps_own_shape(it, pic.drawn.is_some()), pic.info.coverage);
     let plated = d == sharp::Dress::Plated;
     let exact = pic.get(d, x.slot);
     let Some(size) = exact.or_else(|| pic.closest(d)) else { return Fit::Other };

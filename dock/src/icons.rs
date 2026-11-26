@@ -74,6 +74,9 @@ impl Drop for ScreenDc {
 }
 
 pub fn load(path: &str, size: i32) -> Option<Icon> {
+    if is_own_app_icon(path) {
+        return own_app_icon(size.max(1) as u32);
+    }
     // The dock's Launchpad pin has no file: its icon is drawn.
     if crate::launchpad::is_pin(path) {
         return crate::launchpad::glyph::pin_icon(path, size, Appearance::system(crate::syslook::current().light));
@@ -230,6 +233,8 @@ pub fn premultiply(px: &mut [u8]) {
 /// Where an icon's source pixels came from (logged once per icon).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
+    /// NopBar's embedded app icon.
+    Bundled,
     /// The shell's SOURCE_PX frame.
     Shell,
     /// A smaller real frame: the shell had no SOURCE_PX one.
@@ -266,20 +271,27 @@ pub fn is_stack_folder(key: &str) -> bool {
 /// The keys whose dock icon is drawn rather than read (and never cached).
 /// Touches the disk: icon thread only.
 pub fn drawn_key(key: &str) -> bool {
-    key.eq_ignore_ascii_case(crate::dock::TRASH) || crate::launchpad::is_pin(key) || is_stack_folder(key) || is_own_exe(key)
+    key.eq_ignore_ascii_case(crate::dock::TRASH) || crate::launchpad::is_pin(key) || is_stack_folder(key)
 }
 
-/// `key` is NopBar's own program (its settings and other windows): drawn
-/// as the gnome tile like the dock's other own tiles. The exe's icon is the
-/// brand icon with the Mac's margin round its plate (80 % of the canvas),
-/// a size smaller than the full-bleed icons beside it.
-pub fn is_own_exe(key: &str) -> bool {
-    own_exe_name(key) && std::env::current_exe().is_ok_and(|me| Path::new(key) == me || key.eq_ignore_ascii_case(&me.to_string_lossy()))
-}
+pub const NOPBAR_ICON_KEY: &str = "shell:AppsFolder\\NopBar.NopBar";
 
-/// Pure: `key` names a file called nopbar.exe.
-fn own_exe_name(key: &str) -> bool {
-    Path::new(key).file_name().is_some_and(|f| f.eq_ignore_ascii_case("nopbar.exe"))
+/// The running executable or the installed Start entry, as an AUMID or
+/// a path relative to the Programs known folder or absolute on disk.
+pub fn is_own_app_icon(key: &str) -> bool {
+    const START_ENTRY: &str = "{A77F5D77-2E2B-44C3-A6A2-ABA601054A51}\\NopBar.lnk";
+    let entry = apps_folder(key).unwrap_or(key);
+    if entry.eq_ignore_ascii_case(crate::updates::AUMID) || entry.eq_ignore_ascii_case(START_ENTRY) {
+        return true;
+    }
+    let Some(name) = Path::new(entry).file_name() else { return false };
+    let matches = |path: PathBuf| Path::new(entry) == path || entry.eq_ignore_ascii_case(&path.to_string_lossy());
+    if name.eq_ignore_ascii_case("nopbar.exe") {
+        std::env::current_exe().is_ok_and(matches)
+    } else {
+        name.eq_ignore_ascii_case("NopBar.lnk")
+            && std::env::var_os("APPDATA").is_some_and(|root| matches(PathBuf::from(root).join(crate::release::SHORTCUT)))
+    }
 }
 
 /// The Recycle Bin holds something (on any drive).
@@ -389,8 +401,6 @@ pub fn drawn_glyph(key: &str) -> Option<crate::glyphs::Glyph> {
         Some(if recycle_bin_full() { crate::glyphs::Glyph::TrashFull } else { crate::glyphs::Glyph::Trash })
     } else if is_stack_folder(key) {
         Some(stack_glyph(key, &known_folders()))
-    } else if is_own_exe(key) {
-        Some(crate::glyphs::Glyph::Mark)
     } else {
         None
     }
@@ -442,7 +452,7 @@ fn apps_folder(key: &str) -> Option<&str> {
 /// ship a logo for each: `pick_logo`).
 pub fn themed(key: &str) -> bool {
     // (Drawn tiles say so in their reply: Source::Drawn, Appearance.)
-    apps_folder(key).is_some()
+    apps_folder(key).is_some() && !is_own_app_icon(key)
 }
 
 /// The disk cache tag of `key`'s source: the side asked of the shell (so a
@@ -467,6 +477,9 @@ pub fn source_tag(key: &str, target: i32, light: bool) -> String {
 /// whatever real frame is largest), for a dock that looks `look`. STA
 /// thread with COM.
 pub fn load_source(key: &str, target: i32, look: Appearance) -> Option<(Icon, Source)> {
+    if is_own_app_icon(key) {
+        return own_app_icon(target.max(1) as u32).map(|i| (i, Source::Bundled));
+    }
     let light = look.light;
     if let Some((i, _)) = drawn_pictures(key, target, &[], look) {
         return Some((i, Source::Drawn));
@@ -909,6 +922,13 @@ pub fn decode_image_fit(path: &Path, max_side: u32) -> Option<Icon> {
 /// An image in memory (an embedded PNG), as decode_image_fit (WIC; needs
 /// COM).
 pub fn decode_bytes_fit(bytes: &[u8], max_side: u32) -> Option<Icon> {
+    with_image_decoder(bytes, |factory, decoder| unsafe { decode_first_frame(factory, decoder, max_side) })
+}
+
+fn with_image_decoder<T>(
+    bytes: &[u8],
+    read: impl FnOnce(&windows::Win32::Graphics::Imaging::IWICImagingFactory, &windows::Win32::Graphics::Imaging::IWICBitmapDecoder) -> Option<T>,
+) -> Option<T> {
     use windows::Win32::Graphics::Imaging::{CLSID_WICImagingFactory, IWICImagingFactory, WICDecodeMetadataCacheOnLoad};
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
     unsafe {
@@ -918,8 +938,60 @@ pub fn decode_bytes_fit(bytes: &[u8], max_side: u32) -> Option<Icon> {
         // Every pixel is copied out before this returns: `bytes` need not
         // outlive the call.
         let decoder = factory.CreateDecoderFromStream(&stream, std::ptr::null(), WICDecodeMetadataCacheOnLoad).ok()?;
-        decode_first_frame(&factory, &decoder, max_side)
+        read(&factory, &decoder)
     }
+}
+
+/// NopBar's bundled icon fitted to an in-app slot (WIC; needs COM).
+pub fn own_app_icon(side: u32) -> Option<Icon> {
+    own_app_pictures(side, &[]).map(|(icon, _)| icon)
+}
+
+/// The peak and smaller dock pictures, each read from the closest frame
+/// that can cover its size. Keep the artwork's transparent margin and
+/// centered placement at every scale.
+pub fn own_app_pictures(side: u32, smaller: &[u32]) -> Option<(Icon, Vec<Icon>)> {
+    use windows::core::Interface;
+    use windows::Win32::Graphics::Imaging::{IWICBitmapSource, WICBitmapInterpolationModeFant, WICBitmapInterpolationModeHighQualityCubic};
+
+    const ICO: &[u8] = include_bytes!("../res/nopbar.ico");
+    with_image_decoder(ICO, |factory, decoder| unsafe {
+        let mut frames = (0..decoder.GetFrameCount().ok()?).filter_map(|index| {
+            let frame = decoder.GetFrame(index).ok()?;
+            let (mut w, mut h) = (0, 0);
+            frame.GetSize(&mut w, &mut h).ok()?;
+            (w == h && w > 0).then_some((w, frame))
+        }).collect::<Vec<_>>();
+        frames.sort_unstable_by_key(|(w, _)| *w);
+
+        let picture = |requested: u32| {
+            let target = requested.clamp(1, 1024);
+            let (w, frame) = frames.iter().find(|(w, _)| *w >= target).or_else(|| frames.last())?;
+            let input: IWICBitmapSource = premultiplied_frame(factory, frame)?.cast().ok()?;
+            let input = if *w != target {
+                let scaler = factory.CreateBitmapScaler().ok()?;
+                let filter = if *w > target { WICBitmapInterpolationModeFant } else { WICBitmapInterpolationModeHighQualityCubic };
+                scaler.Initialize(&input, target, target, filter).ok()?;
+                scaler.cast().ok()?
+            } else {
+                input
+            };
+            bitmap_pixels(&input, target, target)
+        };
+        let icon = picture(side)?;
+        let small = smaller.iter().copied().filter(|&s| s < side).filter_map(picture).collect();
+        Some((icon, small))
+    })
+}
+
+unsafe fn premultiplied_frame(
+    factory: &windows::Win32::Graphics::Imaging::IWICImagingFactory,
+    frame: &windows::Win32::Graphics::Imaging::IWICBitmapFrameDecode,
+) -> Option<windows::Win32::Graphics::Imaging::IWICFormatConverter> {
+    use windows::Win32::Graphics::Imaging::{GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, WICBitmapPaletteTypeCustom};
+    let conv = factory.CreateFormatConverter().ok()?;
+    conv.Initialize(frame, &GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, None, 0.0, WICBitmapPaletteTypeCustom).ok()?;
+    Some(conv)
 }
 
 /// The first frame, converted to premultiplied BGRA, then shrunk to
@@ -930,15 +1002,14 @@ unsafe fn decode_first_frame(
     max_side: u32,
 ) -> Option<Icon> {
     use windows::core::Interface;
-    use windows::Win32::Graphics::Imaging::{GUID_WICPixelFormat32bppPBGRA, IWICBitmapSource, WICBitmapDitherTypeNone, WICBitmapInterpolationModeFant, WICBitmapPaletteTypeCustom};
+    use windows::Win32::Graphics::Imaging::{IWICBitmapSource, WICBitmapInterpolationModeFant};
     let frame = decoder.GetFrame(0).ok()?;
     let (mut w, mut h) = (0u32, 0u32);
     frame.GetSize(&mut w, &mut h).ok()?;
     if w == 0 || h == 0 {
         return None;
     }
-    let conv = factory.CreateFormatConverter().ok()?;
-    conv.Initialize(&frame, &GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, None, 0.0, WICBitmapPaletteTypeCustom).ok()?;
+    let conv = premultiplied_frame(factory, &frame)?;
     let max = max_side.clamp(1, MAX_ICON_SIDE);
     let (src, w, h): (IWICBitmapSource, u32, u32) = if w.max(h) > max {
         let (fw, fh) = fit_box(w, h, max);
@@ -951,6 +1022,10 @@ unsafe fn decode_first_frame(
     } else {
         (conv.cast().ok()?, w, h)
     };
+    bitmap_pixels(&src, w, h)
+}
+
+unsafe fn bitmap_pixels(src: &windows::Win32::Graphics::Imaging::IWICBitmapSource, w: u32, h: u32) -> Option<Icon> {
     let len = icon_bytes(w as i64, h as i64)?;
     let mut pixels = vec![0u8; len];
     src.CopyPixels(std::ptr::null(), w * 4, &mut pixels).ok()?;
@@ -1168,6 +1243,31 @@ pub fn write_cache(path: &Path, icon: &Icon) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nopbar_resolves_to_the_bundled_art_at_each_size() {
+        crate::gfx::promo_kit::keep_com();
+        let key = NOPBAR_ICON_KEY;
+        assert!(is_own_app_icon(key));
+        assert!(is_own_app_icon(r"shell:AppsFolder\{A77F5D77-2E2B-44C3-A6A2-ABA601054A51}\NopBar.lnk"));
+        assert!(!is_own_app_icon(r"C:\elsewhere\nopbar.exe"));
+        assert!(!is_own_app_icon(r"shell:AppsFolder\Other.NopBar"));
+        assert!(drawn_glyph(key).is_none());
+
+        for px in [16, 20, 24, 32, 40, 44, 48, 64, 66, 88, 128, 256] {
+            let (icon, source) = load_source(key, px, Appearance::default()).unwrap();
+            assert_eq!(source, Source::Bundled);
+            assert_eq!((icon.width, icon.height), (px as u32, px as u32));
+            assert_eq!(icon.pixels, load(key, px).unwrap().pixels);
+            assert_eq!(icon.pixels[3], 0, "transparent corner at {px} px");
+            let pixels = icon.pixels.as_chunks::<4>().0;
+            assert!(pixels.iter().any(|p| p[2].saturating_sub(p[1]) > 40 && p[3] == 255), "red hat at {px} px");
+            let width = pixels.chunks_exact(px as usize)
+                .map(|row| row.iter().filter(|p| p[3] >= 200).count())
+                .max().unwrap();
+            assert!(width >= px as usize * 80 / 100, "artwork takes {width} of {px} px");
+        }
+    }
 
     #[test]
     fn the_cache_sweep_drops_old_and_excess_files() {

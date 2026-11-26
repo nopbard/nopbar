@@ -1443,7 +1443,7 @@ pub(crate) mod promo;
 #[path = "dock_harmony.rs"]
 mod harmony;
 #[cfg(test)]
-pub(crate) use harmony::{paint_site_dock, render_readme_dock};
+pub(crate) use harmony::{paint_site_all_apps_dock, paint_site_dock, render_readme_dock};
 #[cfg(test)]
 pub(crate) use label::font_compare_label;
 #[cfg(test)]

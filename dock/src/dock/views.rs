@@ -752,6 +752,8 @@ pub(super) fn windows_for<T: Clone>(wins: &[T], only_on: Option<isize>, monitor_
 pub(super) struct Pic {
     pub info: icons::IconInfo,
     pub sizes: Vec<PicSize>,
+    /// The bundled app icon uses the brand silhouette and its own margins.
+    pub bundled: bool,
     /// One of NopBar's drawn tiles (icons::Source::Drawn): the look it was
     /// drawn for (a dock with another look asks for its own). None: any
     /// other source.

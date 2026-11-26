@@ -226,7 +226,10 @@ impl App {
     }
 
     pub(super) unsafe fn draw_icon(&self, dc: &ID2D1DeviceContext, path: &str, r: D2D_RECT_F) -> Result<()> {
-        let src = self.icon_source(path);
+        self.draw_icon_source(dc, self.icon_source(path), r)
+    }
+
+    unsafe fn draw_icon_source(&self, dc: &ID2D1DeviceContext, src: String, r: D2D_RECT_F) -> Result<()> {
         let cache = self.pin_icons.borrow();
         let img = match cache.get(&src) {
             Some(Some(img)) => img,
@@ -262,9 +265,7 @@ impl App {
         // where it stands read together).
         let card = self.card_row(dc, "about.app", y, 88.0, left, right, true, false)?;
         let y = card.top;
-        if let Ok(exe) = std::env::current_exe() {
-            self.draw_icon(dc, &exe.to_string_lossy(), m.r(rect(tl, y + 16.0, tl + 56.0, y + 72.0)))?;
-        }
+        self.draw_icon_source(dc, crate::icons::NOPBAR_ICON_KEY.into(), m.r(rect(tl, y + 16.0, tl + 56.0, y + 72.0)))?;
         let nx = tl + 56.0 + 16.0;
         let room = cr - nx;
         let name_w = self.text_w("NopBar", tok::TITLE_SIZE, true).min(room - tok::INFO_W);

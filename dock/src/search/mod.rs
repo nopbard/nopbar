@@ -646,6 +646,9 @@ fn files_worker(shared: &Shared, rx: Receiver<Msg<(u64, String)>>) {
 /// loads through here too).
 pub(crate) fn load_icon(key: &str, px: u32) -> Option<Icon> {
     let size = px as i32;
+    if crate::icons::is_own_app_icon(key) {
+        return crate::icons::own_app_icon(px);
+    }
     if key.to_lowercase().starts_with("shell:appsfolder\\") {
         let path = crate::icons::cache_path(key, &size.to_string());
         if let Some(p) = &path {

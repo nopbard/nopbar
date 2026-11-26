@@ -803,6 +803,8 @@ impl Pad {
 #[cfg(test)]
 #[path = "applib_harmony.rs"]
 mod harmony;
+#[cfg(test)]
+pub(crate) use harmony::paint_site_all_apps;
 
 #[cfg(test)]
 mod tests {

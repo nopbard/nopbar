@@ -58,9 +58,9 @@ const FALLBACK: [u32; 2] = [48, 32];
 /// `key`'s icon asked at `px`: search's loader (its disk cache), and when
 /// the shell boxed it (no frame that large in the file), the largest real
 /// smaller frame instead.
-fn load(key: &str, px: u32) -> Option<crate::icons::Icon> {
+pub(super) fn load(key: &str, px: u32) -> Option<crate::icons::Icon> {
     let icon = crate::search::load_icon(key, px)?;
-    if !crate::icons::looks_upscaled(&icon) {
+    if crate::icons::is_own_app_icon(key) || !crate::icons::looks_upscaled(&icon) {
         return Some(icon);
     }
     FALLBACK.iter().filter(|&&f| f < px).find_map(|&f| crate::search::load_icon(key, f).filter(|i| !crate::icons::looks_upscaled(i))).or(Some(icon))

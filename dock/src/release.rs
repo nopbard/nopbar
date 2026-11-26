@@ -907,6 +907,7 @@ mod tests {
         ours.sort();
         assert_eq!(dest, ours);
         assert!(iss.contains(&format!("AppUserModelID: \"{}\"", crate::updates::AUMID)));
+        assert!(iss.lines().any(|line| line == "ChangesAssociations=yes"), "Explorer refreshes its icon cache after install");
         assert!(iss.contains(r#"Name: "{userprograms}\NopBar""#), "shortcut path must match SHORTCUT");
         assert!(iss.contains(&format!("#define UninstallKey \"{UNINSTALL_KEY}\"")));
         assert!(iss.contains(r#"""{app}\nopbar.exe"" --uninstall"#));

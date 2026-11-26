@@ -96,6 +96,12 @@ fn render(stage: &Stage, wallpaper: &Icon, mica: &MicaPicture, out: &Path, look:
     let bar = bar_harmony::paint_site_bar(stage, &cv, &theme, mica, SCALE, Some(Cell::Companion));
     let briefing = crate::companion::paint_site_news(stage, &cv, &theme, bar.companion);
     save_scene(&finish(cv), around(briefing, 160, 144), "gnome");
+
+    let cv = canvas(stage, wallpaper);
+    crate::launchpad::paint_site_all_apps(stage, &cv, &theme, &glass, SCALE, bar_harmony::bar_h());
+    bar_harmony::paint_site_bar(stage, &cv, &theme, mica, SCALE, None);
+    crate::dock::paint_site_all_apps_dock(&cv, stage, &theme, &glass, SCALE);
+    save_scene(&finish(cv), DISPLAY, "all-apps");
 }
 
 fn render_island(stage: &Stage, wallpaper: &Icon, theme: &crate::theme::Theme, save: impl FnOnce(&Icon, RECT)) {

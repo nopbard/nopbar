@@ -131,15 +131,13 @@ fn harmony_settings_states() {
         h.app.scroll = (ht - H0).max(0.0);
         save(&mut h, light, "reset-confirm", H0);
 
-        // About: the app's card with NopBar's icon (the exe's: the test
-        // binary has none, so res/nopbar.ico, the one build.rs bakes in).
+        // Load the About card's icon through the settings icon loader's key.
         rest(&mut h);
         let about = page(&h, &|s| s.kind == model::Kind::About);
-        let exe = std::env::current_exe().unwrap().to_string_lossy().to_string();
-        let ico = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("res").join("nopbar.ico");
-        let icon = crate::icons::load(&ico.to_string_lossy(), (64.0 * kit::scale().min(2.0)) as i32);
-        assert!(icon.is_some(), "res/nopbar.ico loads");
-        h.app.pin_icons.borrow_mut().insert(exe, icon);
+        let key = crate::icons::NOPBAR_ICON_KEY;
+        let icon = crate::icons::load(key, (64.0 * kit::scale().min(2.0)) as i32);
+        assert!(icon.is_some(), "the bundled app icon loads");
+        h.app.pin_icons.borrow_mut().insert(key.into(), icon);
         let (_, ht) = open(&mut h, about);
         save(&mut h, light, "about", ht.min(H0));
 

@@ -136,11 +136,12 @@ fn harmony_stats() {
             let (white, black, sky) = (Rgba { r: 255, g: 255, b: 255, a: 255 }, Rgba { r: 0, g: 0, b: 0, a: 255 }, Rgba { r: 26, g: 235, b: 255, a: 255 });
             Theme::graphite().resolve(&SysLook { high_contrast: Some(HighContrast { window: black, text: white, highlight: sky, highlight_text: black, gray_text: crate::syslook::GRAY_TEXT }), ..Default::default() })
         };
-        // NopBar itself in the list (by power): its gnome mark in the
-        // brand's two colors; in high contrast, one color.
+        // The bundled app icon in the Power list, including high contrast.
         let with_own = |p: &mut Panel| {
             let mut own = made_up("NopBar", false, 0.04);
             own.procs = vec![(std::process::id(), 0)];
+            own.icon = crate::hogs::load_icon(crate::icons::NOPBAR_ICON_KEY);
+            assert!(own.icon.is_some());
             p.battery = true;
             p.on_battery = true;
             p.power = vec![made_up("동영상 편집기", true, 0.46), own];

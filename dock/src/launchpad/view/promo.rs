@@ -42,11 +42,12 @@ fn page_named(stage: &kit::Stage, folder: &str, light: bool, name: &str, w: f32,
     let two_lines = lines_h(gfx.dwrite(), &family, grid::LABEL_SIZE * crate::fonts::scale(), 2).unwrap_or(0.0);
     let regions = grid::regions(ww, wh, false);
     let g = grid::grid_in(&regions, two_lines);
-    let apps: Vec<_> = crate::dock::promo::all_tiles().into_iter().filter(|(id, ..)| *id != "trash" && *id != "mark").collect();
+    let own_icon = name == "own-icon-all-apps";
+    let apps: Vec<_> = crate::dock::promo::all_tiles().into_iter().filter(|(id, ..)| *id != "trash" && (*id != "mark" || own_icon)).collect();
     let per_page = g.per_page().max(1);
     let pages = apps.len().div_ceil(per_page).max(2);
     let cv = stage.canvas(w, h);
-    if name == "windows-all-apps" {
+    if name == "windows-all-apps" || own_icon {
         unsafe {
             cv.dc.Clear(Some(&col(kit::harmony_backdrop(light))));
             let brush = cv.dc.CreateSolidColorBrush(&super::plate_tint(&theme), None).unwrap();
@@ -66,10 +67,18 @@ fn page_named(stage: &kit::Stage, folder: &str, light: bool, name: &str, w: f32,
         }
         // The first page: icons and names in their cells.
         let ink_b = cv.dc.CreateSolidColorBrush(&col(ink), None).unwrap();
-        for (slot, (_, glyph, label)) in apps.iter().take(per_page).enumerate() {
+        for (slot, (_, picture, label)) in apps.iter().take(per_page).enumerate() {
             let ir = g.icon(slot, false);
             let px = (ir.w() * kit::scale()).round() as u32;
-            cv.icon(&crate::glyphs::tile(px, *glyph, TileLook::new(light, None)), ir.l, oy + ir.t, ir.w(), true);
+            let (icon, squircle) = match picture {
+                crate::dock::promo::Picture::NopBar => {
+                    let key = crate::icons::NOPBAR_ICON_KEY;
+                    let icon = super::super::loader::load(key, super::super::loader::frame_px(px)).expect("Load the NopBar app entry");
+                    (icon, false)
+                }
+                _ => (picture.draw(px, TileLook::new(light, None)), true),
+            };
+            cv.icon(&icon, ir.l, oy + ir.t, ir.w(), squircle);
             let lr = g.label(slot, false);
             let lw = g.label_w();
             let label: &str = names.get(slot).copied().unwrap_or(*label);
@@ -87,7 +96,7 @@ fn page_named(stage: &kit::Stage, folder: &str, light: bool, name: &str, w: f32,
             cv.dc.FillEllipse(&D2D1_ELLIPSE { point: Vector2 { X: d.cx(), Y: oy + d.cy() }, radiusX: d.w() / 2.0, radiusY: d.w() / 2.0 }, &b);
         }
     }
-    if name == "windows-all-apps" { kit::harmony_save(cv, folder, name); }
+    if name == "windows-all-apps" || own_icon { kit::harmony_save(cv, folder, name); }
     else { cv.save(&format!("{folder}/launchpad-{name}.png")); }
     serde_json::json!({ "w": w, "h": h, "cols": g.cols, "rows": g.rows })
 }
@@ -106,6 +115,19 @@ fn windows_feel_all_apps() {
     for (folder, light) in kit::LOOKS {
         page_named(&stage, folder, light, "windows-all-apps", 1280.0, 720.0, &[]);
     }
+}
+
+#[test]
+#[ignore = "writes the bundled app icon in the All Apps grid"]
+fn render_own_icon_all_apps() {
+    let out = std::env::var_os("NOPBAR_OWN_ICON_RENDER_DIR").expect("own icon render output directory");
+    let _lang = crate::i18n::test_lock("en");
+    let stage = kit::stage();
+    kit::with_shot_root(out.into(), || {
+        for (folder, light) in kit::LOOKS {
+            page(&stage, folder, light, "own-icon-all-apps", 1280.0, 720.0);
+        }
+    });
 }
 
 fn launchpad_pictures() {

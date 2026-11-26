@@ -72,6 +72,8 @@ DisableDirPage=yes
 DisableProgramGroupPage=yes
 ; The Apps & features entry is written below and points at nopbar.exe --uninstall.
 Uninstallable=no
+; Refresh Explorer's icon cache when the executable and Start shortcut are replaced.
+ChangesAssociations=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; Same floor as version.json min_os (docs/updates.md).

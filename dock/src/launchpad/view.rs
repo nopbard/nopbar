@@ -4063,6 +4063,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 mod promo;
 #[cfg(test)]
 pub(crate) use promo::font_compare;
+#[cfg(test)]
+pub(crate) use applib::paint_site_all_apps;
 
 /// Its states for the design audit (tests only).
 #[cfg(test)]
