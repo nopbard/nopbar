@@ -24,6 +24,8 @@ pub(crate) mod routine;
 mod card;
 mod card_input;
 mod news;
+#[cfg(test)]
+pub(crate) use news::paint_site_news;
 mod agent_news;
 pub(crate) mod agent_toast;
 mod living;

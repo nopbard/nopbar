@@ -2566,7 +2566,9 @@ impl TopBar {
 /// The pill's picture for the promo film (tests only).
 #[cfg(test)]
 #[path = "pill_promo.rs"]
-mod promo;
+pub(super) mod promo;
+#[cfg(test)]
+pub(super) use card::paint_site_island;
 
 #[cfg(test)]
 mod tests {

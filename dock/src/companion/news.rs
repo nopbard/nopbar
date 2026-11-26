@@ -1865,3 +1865,5 @@ mod tests {
 #[cfg(test)]
 #[path = "news_snapshots.rs"]
 mod snapshots;
+#[cfg(test)]
+pub(crate) use snapshots::paint_site_news;

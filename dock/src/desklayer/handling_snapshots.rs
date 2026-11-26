@@ -108,6 +108,23 @@ unsafe fn lay(cv: &kit::Canvas, theme: &crate::theme::Theme, cards: &[(Show, Siz
     cv.dc.SetTransform(&base);
 }
 
+pub(crate) fn paint_site_widgets(cv: &kit::Canvas, theme: &crate::theme::Theme, d: f32) -> RECT {
+    let mut g = grid(d, (4, 2));
+    g.ox = cv.w as i32 - g.cw * g.cols - (40.0 * d).round() as i32;
+    g.oy = (56.0 * d).round() as i32;
+    let memo = "Studio checklist\nReview layout proofs\nPick cover artwork\nCheck the export\nSend the final draft";
+    let cards = [
+        (Show::Note(memo), Size::LARGE, (0, 0)),
+        (Show::Inbox, Size::MEDIUM, (2, 0)),
+        (Show::Battery, Size::MEDIUM, (2, 1)),
+    ].map(|(show, size, (col, row))| (show, size, at(&g, col, row, size, d)));
+    unsafe {
+        cv.dc.SetTransform(&crate::companion::render::scale(d, d));
+        lay(cv, theme, &cards, d);
+    }
+    RECT { left: g.ox, top: g.oy, right: g.ox + g.cw * g.cols, bottom: g.oy + g.ch * g.rows }
+}
+
 pub(crate) fn render_readme_widgets(path: &std::path::Path) {
     let d = 1.0;
     let cv = desk(Wall::Night, 680.0, 464.0, d);

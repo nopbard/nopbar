@@ -16,6 +16,69 @@ use windows_numerics::Vector2;
 use super::*;
 use crate::gfx::promo_kit::{self as kit, col, css, rect};
 
+/// The playing state at rest, on the top bar's own inset and cell layout.
+pub(in crate::topbar) fn site_pill(
+    stage: &kit::Stage,
+    cv: &kit::Canvas,
+    theme: &crate::theme::Theme,
+    scale: f32,
+    spans: &[(f32, f32)],
+    bar_h: f32,
+) -> RECT {
+    let mut live = card::promo::live();
+    let Activity::Media(track) = &mut live[0] else { unreachable!() };
+    track.artist.clear();
+    let (words, _) = model::pill_words(&live[0]);
+    let h = model::rest_height(bar_h, scale);
+    let y = model::snap(model::PILL_INSET, scale);
+    let mut content = Content {
+        lead: model::lead_fit(LEAD, h),
+        trail: EQ_BARS as f32 * EQ_W + (EQ_BARS - 1) as f32 * EQ_GAP,
+        trail_h: EQ_H,
+        ..Default::default()
+    };
+    let (title, tw, th) = stage.gfx.text_layout_line(
+        &words, &theme.font.family, TEXT_SIZE, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        model::text_room(&content, model::PILL_MAX_W),
+    ).unwrap();
+    content.text = tw;
+    content.text_h = th;
+    content.baseline = Some(crate::gfx::first_baseline(&title, th));
+    let want = model::pill_width(&content);
+    let (x, w) = model::place(cv.w as f32 / scale, spans, want, model::pill_need(&content)).unwrap();
+    let x = model::snap(x, scale);
+    let w = model::snap(w, scale);
+    let center = x + w / 2.0;
+    let f = model::frame(false, w, h, &content, scale);
+    let radius = crate::theme::capsule(h);
+    let bounds = rect(x, y, x + w, y + h);
+    let coat = pill_coat(theme, scale);
+    let (_, ink, ..) = pill_colors(theme);
+    unsafe {
+        cv.dc.SetTransform(&crate::companion::render::scale(scale, scale));
+        crate::gfx::soft_shadows(&cv.dc, bounds, radius, &pill_shadows(theme, true)).unwrap();
+        let k = crate::theme::CONTACT_W;
+        cv.stroke_rr(rect(x - k / 2.0, y - k / 2.0, x + w + k / 2.0, y + h + k / 2.0), radius + k / 2.0, theme.contact(), k);
+        crate::gfx::parts::plate_fill(&cv.dc, bounds, radius, Some(coat.fill), coat.fill.0).unwrap();
+        if let Some((rim, width)) = coat.rim {
+            kit::draw_rim_px(cv, x, y, w, h, radius, rim, width);
+        }
+        let b = cv.dc.CreateSolidColorBrush(&col(ink), None).unwrap();
+        crate::gfx::draw_text(&cv.dc, Vector2 { X: center + f.text.x, Y: y + f.text.y }, &title, &b, D2D1_DRAW_TEXT_OPTIONS_NONE);
+        let factors = [0.42, 0.76, 1.0, 0.58];
+        for i in 0..EQ_BARS {
+            let x = center + f.trail.x + i as f32 * (EQ_W + EQ_GAP);
+            let bottom = y + f.trail.y + EQ_H;
+            cv.fill_rr(rect(x, bottom - EQ_H * factors[i % factors.len()], x + EQ_W, bottom), EQ_W / 2.0, eq_color(theme));
+        }
+        cv.dc.SetTransform(&windows_numerics::Matrix3x2::identity());
+        let glyph = crate::glyphs::fitted(G_MUSIC, (center + f.lead.x) * scale, (y + f.lead.y) * scale, f.lead.w * scale, 14.0 * scale);
+        crate::glyphs::draw_device(&cv.dc, G_MUSIC, &glyph, col(ink)).unwrap();
+    }
+    let px = |v: f32| (v * scale).round() as i32;
+    RECT { left: px(x), top: px(y), right: px(x + w), bottom: px(y + h) }
+}
+
 #[test]
 #[ignore = "writes the promo film's pictures: cargo test -p dock promo_ -- --ignored"]
 fn promo_island_pill() {

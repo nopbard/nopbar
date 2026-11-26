@@ -200,6 +200,31 @@ fn menu(root: &Path, theme: &Theme, light_wall: bool, dpi: f32) {
     );
 }
 
+pub(crate) fn paint_site_news(stage: &kit::Stage, cv: &kit::Canvas, theme: &Theme, slot: SlotAnchor) -> RECT {
+    let time = 22_000 * 86400 + 8 * 3600;
+    let briefing = assistant::morning(
+        assistant::Morning {
+            calendar: Some(vec![
+                (time + 5400, time + 9000, "Studio review".into()),
+                (time + 14400, time + 16200, "Print check".into()),
+            ]),
+            notes: vec![Row::new("Send the draft".into(), time, None, 0, None)],
+            batteries: vec![("Keyboard".into(), 20)],
+        },
+        time,
+        0,
+    ).unwrap();
+    let work = RECT { left: 0, top: slot.rect.bottom, right: cv.w as i32, bottom: cv.h as i32 };
+    let r = card::place_slot(slot, work, briefing.height());
+    let under = backdrop::under(r).expect("briefing backdrop");
+    let s = slot.dpi;
+    unsafe {
+        cv.dc.SetTransform(&(render::translate(r.left as f32 / s, r.top as f32 / s) * render::scale(s, s)));
+        card::paint(&cv.dc, &stage.gfx, &briefing, theme, Some(&under)).unwrap();
+    }
+    r
+}
+
 #[test]
 #[ignore = "fixture backdrops and offscreen production painters"]
 fn gnome_a_render_matrix() {

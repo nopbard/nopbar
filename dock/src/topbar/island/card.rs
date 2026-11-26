@@ -2735,6 +2735,8 @@ pub(super) mod promo;
 #[cfg(test)]
 #[path = "card_harmony.rs"]
 mod harmony;
+#[cfg(test)]
+pub(in crate::topbar) use harmony::paint_site_island;
 
 #[cfg(test)]
 mod tests {

@@ -58,6 +58,7 @@ enum What {
     Input(&'static str, bool),
     /// Percent, charging.
     Battery(u8, bool),
+    Companion(bool),
     /// Desktops, the current one.
     Dots(usize, usize),
 }
@@ -74,6 +75,7 @@ impl What {
             What::Glyph(..) => Cell::Control,
             What::Input(..) => Cell::Input,
             What::Battery(..) => Cell::Battery,
+            What::Companion(_) => Cell::Companion,
             What::Dots(..) => Cell::Desktops,
         }
     }
@@ -201,6 +203,19 @@ fn content<'a>(gfx: &'a crate::gfx::Gfx, theme: &'a Theme, what: What, ink: D2D1
             let art = battery_art(gfx, theme, ink, p, charging, s);
             Drawn { w: BATTERY_W, h: BATTERY_H, paint: Box::new(move |cv, x, y| unsafe { paint_battery(&cv.dc, x, y, &art).unwrap() }) }
         }
+        What::Companion(notice) => {
+            let h = (h - 8.0).max(12.0);
+            let ink = Rgba { r: (ink.r * 255.0).round() as u8, g: (ink.g * 255.0).round() as u8, b: (ink.b * 255.0).round() as u8, a: 255 };
+            Drawn {
+                w: 20.0,
+                h,
+                paint: Box::new(move |cv, x, y| unsafe {
+                    cv.dc.SetTransform(&Matrix3x2 { M11: s, M22: s, M31: x, M32: y, ..Matrix3x2::identity() });
+                    super::paint_companion_home(&cv.dc, h, ink, notice).unwrap();
+                    cv.dc.SetTransform(&Matrix3x2::identity());
+                }),
+            }
+        }
         What::Dots(n, current) => {
             let (w_px, h_px) = ((desktops::dots_width(n) * s).ceil().max(1.0), (GLYPH_BOX * s).round().max(1.0));
             let ring = D2D1_COLOR_F { a: ink.a * if theme.high_contrast { 1.0 } else { 0.8 }, ..ink };
@@ -318,6 +333,13 @@ pub(in crate::topbar) fn paint(cv: &Canvas, gfx: &crate::gfx::Gfx, theme: &Theme
 
 #[allow(clippy::too_many_arguments)]
 fn paint_bar(cv: &Canvas, gfx: &crate::gfx::Gfx, theme: &Theme, ground: &Ground, s: f32, (ox, oy, width): (f32, f32, f32), row: Row, under: Option<&crate::icons::Icon>, cols: Option<&[look::Col]>) -> Vec<(f32, f32)> {
+    let (left, right, (lit_text, lit_glyph)) = cells();
+    let lit = [lit_text, left.len() + lit_glyph];
+    paint_cells(cv, gfx, theme, ground, s, (ox, oy, width), row, under, cols, &left, &right, &lit)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_cells(cv: &Canvas, gfx: &crate::gfx::Gfx, theme: &Theme, ground: &Ground, s: f32, (ox, oy, width): (f32, f32, f32), row: Row, under: Option<&crate::icons::Icon>, cols: Option<&[look::Col]>, left: &[What], right: &[What], lit: &[usize]) -> Vec<(f32, f32)> {
     let h = bar_h();
     let px = |v: f32| baseline::snap_px(v, s) * s;
     let (bx, by) = (px(ox), px(oy));
@@ -364,8 +386,6 @@ fn paint_bar(cv: &Canvas, gfx: &crate::gfx::Gfx, theme: &Theme, ground: &Ground,
             cv.dc.FillRectangle(&D2D_RECT_F { top: bar.bottom - w, ..bar }, &cv.dc.CreateSolidColorBrush(&d2d(e), None).unwrap());
         }
     }
-    let (left, right, (lit_text, lit_glyph)) = cells();
-    let lit = [lit_text, left.len() + lit_glyph];
     let all: Vec<What> = left.iter().chain(right.iter()).copied().collect();
     let (inset, ph, rad) = hover_pill(h);
     let mode = crate::motion::Mode::Full;
@@ -374,8 +394,8 @@ fn paint_bar(cv: &Canvas, gfx: &crate::gfx::Gfx, theme: &Theme, ground: &Ground,
     let state_of = |i: usize| if lit.contains(&i) { row.state } else { State::Rest };
     let inks: Vec<Rgba> = (0..all.len()).map(|i| capsule::look(theme, ground.mark, state_of(i), ICON_CELL, ph, mode).ink.unwrap_or(ground.ink)).collect();
     let mut drawn: Vec<Drawn> = all.iter().zip(&inks).map(|(w, ink)| content(gfx, theme, *w, d2d(*ink), s)).collect();
-    let lw: Vec<(Cell, f32)> = drawn[..left.len()].iter().zip(&left).map(|(d, w)| (w.cell(), d.w)).collect();
-    let rw: Vec<(Cell, f32)> = drawn[left.len()..].iter().zip(&right).map(|(d, w)| (w.cell(), d.w)).collect();
+    let lw: Vec<(Cell, f32)> = drawn[..left.len()].iter().zip(left).map(|(d, w)| (w.cell(), d.w)).collect();
+    let rw: Vec<(Cell, f32)> = drawn[left.len()..].iter().zip(right).map(|(d, w)| (w.cell(), d.w)).collect();
     let at = places(width, &lw, &rw);
     // Clear over a known wallpaper: each cell's own look (its ink, halo,
     // open fill and guard plate), from the columns under it.
@@ -577,6 +597,56 @@ fn paint_glass_desktop(stage: &kit::Stage, cv: &Canvas, theme: &Theme, wall: &cr
         }
     }
     backdrop::set_test(None);
+}
+
+pub(super) struct SiteBar {
+    pub spans: Vec<(f32, f32)>,
+    pub control: RECT,
+    pub companion: crate::companion::SlotAnchor,
+}
+
+pub(super) fn paint_site_bar(
+    stage: &kit::Stage,
+    cv: &Canvas,
+    theme: &Theme,
+    mica: &crate::wallpaper::MicaPicture,
+    s: f32,
+    open: Option<Cell>,
+) -> SiteBar {
+    let screen = RECT { left: 0, top: 0, right: cv.w as i32, bottom: cv.h as i32 };
+    let bar = RECT { bottom: (bar_h() * s).round() as i32, ..screen };
+    let (luma, strip) = look::mica_strip(mica, screen, bar).expect("bar backdrop");
+    let wall = look::Wall::Glass(crate::theme::AdaptiveGlass::new(luma, None));
+    let ground = look::ground(theme, look::Style::Glass, look::Env::default(), &wall);
+    let (left, _, _) = cells();
+    let right = [
+        What::Dots(3, 0),
+        What::Input("A", false),
+        What::Battery(78, false),
+        What::Glyph(Glyph::Search, GLYPH_SIZE),
+        What::Glyph(Glyph::Sliders, GLYPH_SIZE),
+        What::Companion(open == Some(Cell::Companion)),
+        What::Clock("Thu, Nov 26  2:10 PM"),
+    ];
+    let control = left.len() + 4;
+    let companion = left.len() + 5;
+    let lit = match open {
+        Some(Cell::Control) => &[control][..],
+        Some(Cell::Companion) => &[companion][..],
+        _ => &[],
+    };
+    unsafe { cv.dc.SetTransform(&Matrix3x2::identity()) };
+    let spans = paint_cells(
+        cv, &stage.gfx, theme, &ground, s, (0.0, 0.0, cv.w as f32 / s),
+        Row { state: State::Open, focus: false }, Some(&strip), None, &left, &right, lit,
+    );
+    let slot = |idx: usize| {
+        let (x, w) = spans[idx];
+        RECT { left: (x * s).round() as i32, right: ((x + w) * s).round() as i32, ..bar }
+    };
+    let control = slot(control);
+    let companion = crate::companion::SlotAnchor { rect: slot(companion), dpi: s };
+    SiteBar { spans, control, companion }
 }
 
 #[test]

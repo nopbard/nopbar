@@ -1233,6 +1233,8 @@ pub(crate) use promo::font_compare;
 #[cfg(test)]
 #[path = "bar_harmony.rs"]
 mod bar_harmony;
+#[cfg(test)]
+mod site_renders;
 
 #[cfg(test)]
 mod look_tests {

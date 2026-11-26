@@ -39,11 +39,13 @@ struct Scene {
     pressed: Option<usize>,
     /// The keyboard's focus is on this item (magnified and named too).
     focus: Option<usize>,
+    /// The site's dot indicators and neutral fixtures.
+    site: bool,
 }
 
 impl Scene {
     fn rest(icon: f32) -> Scene {
-        Scene { pos: Position::Bottom, icon, count: usize::MAX, hover: None, pressed: None, focus: None }
+        Scene { pos: Position::Bottom, icon, count: usize::MAX, hover: None, pressed: None, focus: None, site: false }
     }
 }
 
@@ -61,7 +63,13 @@ fn look_theme(look: &str, light: bool) -> Theme {
 }
 
 fn look_of(sc: &Scene) -> Look {
-    Look::from_cfg(&crate::config::DockCfg { icon_size: sc.icon, ..crate::config::Config::default().dock }, true)
+    let mut cfg = crate::config::Config::default().dock;
+    cfg.icon_size = sc.icon;
+    if sc.site {
+        cfg.indicator = Indicator::Dot;
+        cfg.max_scale = 1.45;
+    }
+    Look::from_cfg(&cfg, true)
 }
 
 fn list(sc: &Scene) -> Vec<Option<(&'static str, crate::glyphs::Glyph, &'static str, bool, bool)>> {
@@ -98,7 +106,7 @@ fn dips(cv: &Canvas, s: f32) {
 /// A plate at (`x`, `y`): shadows, the contact ring, the tint, the rim or
 /// high contrast's outline (the order the dock and its label stack them).
 #[allow(clippy::too_many_arguments)]
-fn plate(cv: &Canvas, s: f32, theme: &Theme, m: crate::theme::Material, x: f32, y: f32, w: f32, h: f32, radius: f32, tint: Rgba, shadows: &[(f32, f32, f32, Rgba)], outline: Option<Rgba>) {
+fn plate(cv: &Canvas, s: f32, theme: &Theme, m: crate::theme::Material, x: f32, y: f32, w: f32, h: f32, radius: f32, tint: Rgba, shadows: &[(f32, f32, f32, Rgba)], outline: Option<Rgba>, wallpaper: Option<&kit::GlassWallpaper<'_>>) {
     let r = rect(x, y, x + w, y + h);
     unsafe { crate::gfx::soft_shadows(&cv.dc, r, radius, shadows).unwrap() };
     let contact = theme.contact();
@@ -106,10 +114,16 @@ fn plate(cv: &Canvas, s: f32, theme: &Theme, m: crate::theme::Material, x: f32, 
         let k = crate::theme::CONTACT_W;
         cv.stroke_rr(rect(x - k / 2.0, y - k / 2.0, x + w + k / 2.0, y + h + k / 2.0), radius + k / 2.0, contact, k);
     }
+    if let Some(wall) = wallpaper {
+        wall.draw(cv, r, radius, theme, m);
+    }
     // Flat v2: its fall and its grain (the dock's tint layer, glass::
     // top_light).
     unsafe { crate::gfx::parts::plate_fill(&cv.dc, r, radius, theme.flat_fill(m), tint).unwrap() };
-    let grain = theme.flat_grain(m);
+    let (spec, grain) = if wallpaper.is_some() { crate::glass::light_of(theme, m) } else { (0.0, theme.flat_grain(m)) };
+    if spec > 0.0 {
+        kit::draw_top_light(cv, r, radius, spec);
+    }
     if grain > 0.0 {
         kit::draw_grain(cv, r, radius, grain, s);
     }
@@ -123,6 +137,11 @@ fn plate(cv: &Canvas, s: f32, theme: &Theme, m: crate::theme::Material, x: f32, 
 
 /// Draws one dock with its window's top left at (`ox`, `oy`) DIP.
 fn paint(cv: &Canvas, stage: &kit::Stage, s: f32, theme: &Theme, light: bool, ox: f32, oy: f32, sc: &Scene) {
+    paint_on(cv, stage, s, theme, light, ox, oy, sc, None);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_on(cv: &Canvas, stage: &kit::Stage, s: f32, theme: &Theme, light: bool, ox: f32, oy: f32, sc: &Scene, wallpaper: Option<&kit::GlassWallpaper<'_>>) {
     let look = look_of(sc);
     let items = list(sc);
     let (along, depth) = window(sc);
@@ -156,7 +175,7 @@ fn paint(cv: &Canvas, stage: &kit::Stage, s: f32, theme: &Theme, light: bool, ox
     let bw = at(bar);
     // Dock::build's bar: its shadows, tint, rim (high contrast: its border).
     let shadows = if theme.high_contrast { Vec::new() } else { theme.dock_shadows(false) };
-    plate(cv, s, theme, crate::theme::Material::Dock, bw.x, bw.y, bw.w, bw.h, look.radius, theme.dock_tint(), &shadows, Some(theme.dock_border()));
+    plate(cv, s, theme, crate::theme::Material::Dock, bw.x, bw.y, bw.w, bw.h, look.radius, theme.dock_tint(), &shadows, Some(theme.dock_border()), wallpaper);
     let baseline = bar.y + PAD_CROSS + look.icon;
     let hc_pair = theme.hc.filter(|_| theme.high_contrast).map(|h| ([h.window.r, h.window.g, h.window.b], [h.text.r, h.text.g, h.text.b]));
     let mut u = bar.x + PAD_AXIS;
@@ -171,7 +190,13 @@ fn paint(cv: &Canvas, stage: &kit::Stage, s: f32, theme: &Theme, light: bool, ox
                 let active = *running && *two;
                 cv.fill_rr(rect(r.x - 3.0, r.y - 3.0, r.x + r.w + 3.0, r.y + r.h + 3.0), 4.0, layout::tile_color(theme, sc.hover == Some(i), active));
                 let inset = r.w * (1.0 - press) / 2.0;
-                cv.icon_at(&crate::glyphs::tile(px, *g, TileLook::new(light, hc_pair).finish(!theme.glass())), r.x + inset, r.y + inset, r.w * press, look.squircle, 1.0);
+                let tile = crate::glyphs::tile(px, *g, TileLook::new(light, hc_pair).finish(!theme.glass()));
+                let tile = if sc.site && *g != crate::glyphs::Glyph::Mark {
+                    crate::desklayer::backdrop::saturated(&tile, 0.0)
+                } else {
+                    tile
+                };
+                cv.icon_at(&tile, r.x + inset, r.y + inset, r.w * press, look.squircle, 1.0);
                 if sc.pressed == Some(i) {
                     if let Some(hl) = theme.focus_outline() {
                         unsafe { crate::gfx::parts::paint_squircle_ring(&cv.dc, &cv.factory, r.x, r.y, r.w, 2.0, hl).unwrap() };
@@ -218,13 +243,30 @@ fn paint(cv: &Canvas, stage: &kit::Stage, s: f32, theme: &Theme, light: bool, ox
         let (x, y) = label::snap_px(x + ox, y + oy, s);
         let (bg, fg) = theme.label_colors();
         let shadows = if theme.high_contrast { Vec::new() } else { theme.elevation(Elevation::E1) };
-        plate(cv, s, theme, crate::theme::Material::Tip, x, y, w, h, label::label_radius(theme, h), bg, &shadows, theme.high_contrast.then_some(fg));
+        plate(cv, s, theme, crate::theme::Material::Tip, x, y, w, h, label::label_radius(theme, h), bg, &shadows, theme.high_contrast.then_some(fg), None);
         unsafe {
             cv.dc.SetTransform(&Matrix3x2::identity());
             crate::gfx::paint_label(&cv.dc, x * s, y * s, &a, Rgba { a: 0, ..bg }, fg, theme.radii().tip).expect("painted");
         }
         dips(cv, s);
     }
+}
+
+pub(crate) fn paint_site_dock(
+    cv: &Canvas,
+    stage: &kit::Stage,
+    theme: &Theme,
+    wall: &kit::GlassWallpaper<'_>,
+    s: f32,
+    hovered: bool,
+) -> RECT {
+    let scene = Scene { hover: hovered.then_some(4), site: true, ..Scene::rest(44.0) };
+    let (w, h) = window(&scene);
+    let x = (cv.w as f32 / s - w) / 2.0;
+    let y = cv.h as f32 / s - h - 12.0;
+    dips(cv, s);
+    paint_on(cv, stage, s, theme, theme.is_light, x, y, &scene, Some(wall));
+    RECT { left: (x * s).floor() as i32, top: ((y - GAP) * s).floor() as i32, right: ((x + w) * s).ceil() as i32, bottom: cv.h as i32 }
 }
 
 /// A sheet of docks in `look` at scale `s`: bottom docks one under the

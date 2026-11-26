@@ -75,12 +75,17 @@ pub(super) unsafe fn card_for(stage: &kit::Stage, theme: &Theme, live: Vec<Activ
 /// One card, `set` up, painted at `x`, `y` (DIP) of `cv`, a canvas at the
 /// card's scale, over its plate.
 pub(super) unsafe fn paint_card(cv: &kit::Canvas, x: f32, y: f32, card: &Card, theme: &Theme) {
+    paint_card_on(cv, x, y, card, theme, None);
+}
+
+unsafe fn paint_card_on(cv: &kit::Canvas, x: f32, y: f32, card: &Card, theme: &Theme, wall: Option<&kit::GlassWallpaper<'_>>) {
     use windows_numerics::Matrix3x2;
     let s = card.scale;
     let mut plate = kit::popup_plate(theme, theme.radii().panel, crate::theme::Elevation::E3);
     // (The rim at this canvas's scale, not the film's: Theme::rim_width.)
     let rim = plate.rim.take();
-    kit::draw_plate(cv, x, y, W, card.height, &plate);
+    let bounds = kit::rect(x, y, x + W, y + card.height);
+    kit::draw_plate_on(cv, bounds, &plate, wall.map(|w| (w, theme, crate::theme::Material::Panel)));
     if let Some(stops) = rim {
         kit::draw_rim_px(cv, x, y, W, card.height, plate.radius, stops, theme.rim_width(crate::theme::Material::Panel, s));
     }
@@ -101,6 +106,32 @@ pub(super) unsafe fn paint_card(cv: &kit::Canvas, x: f32, y: f32, card: &Card, t
     let painted = card.paint(&cv.dc, &mut out);
     cv.dc.SetTransform(&Matrix3x2 { M11: s, M12: 0.0, M21: 0.0, M22: s, M31: 0.0, M32: 0.0 });
     painted.expect("painted");
+}
+
+pub(in crate::topbar) fn paint_site_island(
+    stage: &kit::Stage,
+    cv: &kit::Canvas,
+    theme: &Theme,
+    wall: &kit::GlassWallpaper<'_>,
+    anchor: RECT,
+    s: f32,
+) -> RECT {
+    unsafe {
+        register();
+        let mut live = super::promo::live();
+        live.truncate(1);
+        let pill = pill_at(stage, 120.0, 28.0, s, Vec::new());
+        let mut card = card_for(stage, theme, live, s, pill);
+        card.fit = 1.0;
+        card.relayout();
+        let work = RECT { left: 0, top: 0, right: cv.w as i32, bottom: cv.h as i32 };
+        let (r, fit) = place(anchor, work, s, card.height, false);
+        assert_eq!(fit, 1.0);
+        cv.dc.SetTransform(&crate::companion::render::scale(s, s));
+        paint_card_on(cv, r.left as f32 / s, r.top as f32 / s, &card, theme, Some(wall));
+        let _ = DestroyWindow(card.hwnd);
+        r
+    }
 }
 
 fn shoot(name: &str, live: impl Fn() -> Vec<Activity>, set: impl Fn(&mut Card)) {

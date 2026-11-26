@@ -59,15 +59,15 @@ unsafe fn at<R>(cv: &kit::Canvas, x: f32, y: f32, s: f32, f: impl FnOnce(&ID2D1D
 }
 
 /// The parts `plan` asks for, where sync_parts puts their visuals; the
-/// panel's top left at (`m`, `m`) DIP, at `s` px per DIP.
-unsafe fn draw_parts(cv: &kit::Canvas, p: &Panel, plan: &[Spec], m: f32, s: f32) {
+/// panel's top left at (`ox`, `oy`) DIP, at `s` px per DIP.
+unsafe fn draw_parts(cv: &kit::Canvas, p: &Panel, plan: &[Spec], (ox, oy): (f32, f32), s: f32) {
     for spec in plan {
         match spec {
             Spec::Disc(d) => {
                 let side = d.r.right - d.r.left;
                 let px = (side * s).ceil() as u32;
                 let (px0, py0) = p.placed(d.r.left, d.r.top, side);
-                let (x, y) = ((m + px0) * s, (m + py0) * s);
+                let (x, y) = ((ox + px0) * s, (oy + py0) * s);
                 let k = px as f32 / side;
                 let shape = MaskKey::Shape(px, (d.rad * k * 100.0).round() as u32, d.ring.map_or(0, |w| (w * k * 100.0).round() as u32));
                 let ink = rgba(d.ink);
@@ -81,8 +81,8 @@ unsafe fn draw_parts(cv: &kit::Canvas, p: &Panel, plan: &[Spec], m: f32, s: f32)
             }
             Spec::Pill(sp) => {
                 let (px0, py0) = p.placed(sp.r.left, sp.r.top, sp.r.right - sp.r.left);
-                let left = m + px0;
-                let r = rect(left, m + py0, left + sp.r.right - sp.r.left, m + py0 + sp.r.bottom - sp.r.top);
+                let left = ox + px0;
+                let r = rect(left, oy + py0, left + sp.r.right - sp.r.left, oy + py0 + sp.r.bottom - sp.r.top);
                 // Held: as the visual's scale leaves it (a little thicker).
                 let grow = if sp.held { HELD_GROW } else { 1.0 };
                 let cy = (r.top + r.bottom) / 2.0;
@@ -93,8 +93,8 @@ unsafe fn draw_parts(cv: &kit::Canvas, p: &Panel, plan: &[Spec], m: f32, s: f32)
             Spec::Art(r, art) => {
                 let Some(a) = art else { continue };
                 let (px0, py0) = p.placed(r.left, r.top, ART_DIP);
-                let left = m + px0;
-                let rr = rect(left, m + py0, left + ART_DIP, m + py0 + ART_DIP);
+                let left = ox + px0;
+                let rr = rect(left, oy + py0, left + ART_DIP, oy + py0 + ART_DIP);
                 cv.dc.SetTransform(&Matrix3x2 { M11: s, M12: 0.0, M21: 0.0, M22: s, M31: 0.0, M32: 0.0 });
                 clipped(cv, rr, p.radius(Radius::Control), || {
                     let bmp = Panel::bitmap(&cv.dc, a.px, a.px, &a.pixels).expect("the art");
@@ -104,7 +104,7 @@ unsafe fn draw_parts(cv: &kit::Canvas, p: &Panel, plan: &[Spec], m: f32, s: f32)
             }
             Spec::Time(t) => {
                 let (px0, py0) = p.placed(t.r.left, t.r.top, t.r.right - t.r.left);
-                at(cv, m + px0, m + py0, s, |dc| p.draw_time(dc, t)).expect("the position bar")
+                at(cv, ox + px0, oy + py0, s, |dc| p.draw_time(dc, t)).expect("the position bar")
             }
         }
     }
@@ -131,7 +131,7 @@ fn made_up(r: &mut Remote) {
     let dev = |id: &str, name: &str, kind: devices::Kind, default: bool| Endpoint { id: id.into(), name: name.into(), kind, default };
     let app = |key: u64, name: &str, level: u8| AppMix { key, name: name.into(), level, muted: false, active: true, icon: None };
     r.wifi = RadioView::On;
-    r.ssid = Ssid::Some("집 Wi-Fi".into());
+    r.ssid = Ssid::Some(kit::say("집 Wi-Fi", "Orchid Wi-Fi").into());
     r.bt = RadioView::Off;
     r.brightness = Some(Some(70));
     r.radios = Some(true);
@@ -144,8 +144,8 @@ fn made_up(r: &mut Remote) {
     r.inputs = Some(vec![dev("harmony-in-1", "마이크 배열", devices::Kind::Microphone, true), dev("harmony-in-2", "헤드셋 마이크", devices::Kind::Microphone, false)]);
     r.apps = Some(vec![app(1, "음악", 70), app(2, "브라우저", 40)]);
     r.media = Some(Media {
-        title: "새벽 유리".into(),
-        artist: "하모니 악단".into(),
+        title: kit::say("새벽 유리", "Night Walk").into(),
+        artist: kit::say("하모니 악단", "Quiet Playlist").into(),
         app: "harmony.music".into(),
         playing: true,
         prev: true,
@@ -177,20 +177,64 @@ fn looks() -> [(&'static str, Theme, bool); 3] {
 /// The panel as `show` makes it (its window never shown, the workers
 /// idle) over the made-up state, at `s`.
 unsafe fn made_panel(stage: &kit::Stage, theme: &Theme, light: bool, s: f32) -> Panel {
-    register_class();
-    let shared = Arc::new(Shared::new());
-    shared.set_quiet(made_up);
-    let first = layout(&shape_of(&shared.snapshot(), None, removable_rows()));
     // Far off every display (the window is never shown anyway): a bar's
     // button at the top right of 1920 x 1080 DIP.
     let px = |dip: f32| -32000 + (dip * s) as i32;
     let button = RECT { left: px(1800.0), top: px(0.0), right: px(1840.0), bottom: px(32.0) };
     let work = RECT { left: px(0.0), top: px(32.0), right: px(1920.0), bottom: px(1080.0) };
+    panel_at(stage, theme, light, s, button, work)
+}
+
+unsafe fn panel_at(stage: &kit::Stage, theme: &Theme, light: bool, s: f32, button: RECT, work: RECT) -> Panel {
+    register_class();
+    let shared = Arc::new(Shared::new());
+    shared.set_quiet(made_up);
+    let first = layout(&shape_of(&shared.snapshot(), None, removable_rows()));
     let req = Request { gfx: &stage.gfx, theme, button, scale: s, volume: Some((40, false)) };
     let mut p = Panel::make(&req, shared, first, work, !light, idle).expect("the panel");
     p.size = 1.0;
     p.rtl = false;
     p
+}
+
+pub(in crate::topbar) fn paint_site_control(
+    stage: &kit::Stage,
+    cv: &kit::Canvas,
+    theme: &Theme,
+    wall: &kit::GlassWallpaper<'_>,
+    button: RECT,
+    s: f32,
+) -> RECT {
+    unsafe {
+        const OFFSET: i32 = -32000;
+        let work = RECT { left: OFFSET, top: button.bottom + OFFSET, right: cv.w as i32 + OFFSET, bottom: cv.h as i32 + OFFSET };
+        let anchor = RECT { left: button.left + OFFSET, top: button.top + OFFSET, right: button.right + OFFSET, bottom: button.bottom + OFFSET };
+        let old = FAKE_ROWS.with(|rows| rows.replace(Some(Vec::new())));
+        let p = panel_at(stage, theme, theme.is_light, s, anchor, work);
+        p.shared.set_quiet(|r| {
+            r.system = [SystemTile { state: SettingState { on: Some(false), writable: true, ..Default::default() }, ready: true, ..Default::default() }; 3];
+            if let Some(media) = r.media.as_mut() {
+                let art = crate::glyphs::line_tile(96, Glyph::Music, crate::glyphs::TileLook::new(theme.is_light, None));
+                media.art = Some(Arc::new(Art { px: art.width, pixels: art.pixels }));
+            }
+        });
+        let remote = p.shared.snapshot();
+        let layout = p.layout_now(&remote);
+        let (x, y) = ((p.rect.left - OFFSET) as f32 / s, (p.rect.top - OFFSET) as f32 / s);
+        let bounds = rect(x, y, x + W, y + p.height);
+        cv.dc.SetTransform(&crate::companion::render::scale(s, s));
+        let mut plate = kit::popup_plate(theme, PANEL_CORNER, Elevation::E3);
+        plate.rim_w = theme.rim_width(crate::theme::Material::Panel, s);
+        kit::draw_plate_on(cv, bounds, &plate, Some((wall, theme, crate::theme::Material::Panel)));
+        at(cv, x, y, s, |dc| p.paint(dc, &mut Vec::new(), &mut Vec::new(), &remote, &layout)).unwrap();
+        cv.dc.SetTransform(&crate::companion::render::scale(s, s));
+        clipped(cv, bounds, PANEL_CORNER, || draw_parts(cv, &p, &p.plan.borrow(), (x, y), s));
+        cv.dc.SetTransform(&Matrix3x2::identity());
+        p.workers.quit(&p.shared);
+        let _ = DestroyWindow(p.hwnd);
+        FAKE_ROWS.with(|rows| *rows.borrow_mut() = old);
+        RECT { left: (x * s).round() as i32, top: (y * s).round() as i32, right: ((x + W) * s).ceil() as i32, bottom: ((y + p.height) * s).ceil() as i32 }
+    }
 }
 
 /// One scene in every look at 100 and 150 %: `set` puts the panel in the
@@ -228,7 +272,7 @@ unsafe fn scene(name: &str, set: impl Fn(&mut Panel)) {
             }
             let plan = std::mem::take(&mut *p.plan.borrow_mut());
             cv.dc.SetTransform(&Matrix3x2 { M11: s, M12: 0.0, M21: 0.0, M22: s, M31: 0.0, M32: 0.0 });
-            clipped(&cv, rect(m, m, m + W, m + p.height), PANEL_CORNER, || draw_parts(&cv, &p, &plan, m, s));
+            clipped(&cv, rect(m, m, m + W, m + p.height), PANEL_CORNER, || draw_parts(&cv, &p, &plan, (m, m), s));
             cv.dc.SetTransform(&Matrix3x2::identity());
             let file = format!("{name}@{}", (s * 100.0) as u32);
             kit::harmony_save(cv, folder, &file);

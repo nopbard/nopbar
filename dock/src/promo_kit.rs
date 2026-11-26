@@ -526,7 +526,61 @@ pub fn popup_plate(theme: &Theme, radius: f32, e: crate::theme::Elevation) -> Pl
 /// Draws plate `p` at (`x`, `y`), `w` x `h` DIPs: shadows, the contact
 /// ring, tint, top light, rim or outline (as popup::chrome_at stacks them).
 pub fn draw_plate(cv: &Canvas, x: f32, y: f32, w: f32, h: f32, p: &Plate) {
-    let r = rect(x, y, x + w, y + h);
+    draw_plate_on(cv, rect(x, y, x + w, y + h), p, None);
+}
+
+/// A software stand-in for DWM's blurred desktop, sampled in desktop coordinates.
+pub(crate) struct GlassWallpaper<'a> {
+    pub blurred: &'a crate::icons::Icon,
+    pub size: (f32, f32),
+}
+
+impl GlassWallpaper<'_> {
+    pub fn draw(&self, cv: &Canvas, r: D2D_RECT_F, radius: f32, theme: &Theme, material: crate::theme::Material) {
+        use windows::Win32::Graphics::Direct2D::{
+            D2D1_BITMAP_BRUSH_PROPERTIES1, D2D1_BRUSH_PROPERTIES, D2D1_EXTEND_MODE_CLAMP,
+            D2D1_INTERPOLATION_MODE_LINEAR,
+        };
+        let mut image = crate::icons::Icon {
+            width: self.blurred.width,
+            height: self.blurred.height,
+            pixels: self.blurred.pixels.clone(),
+        };
+        if let Some(fx) = theme.glass_fx(material) {
+            let clear = Rgba { a: 0, ..fx.lum };
+            for p in image.pixels.as_chunks_mut::<4>().0 {
+                let out = crate::glass::model([p[2], p[1], p[0]].map(|c| f32::from(c) / 255.0), &fx, clear);
+                p[..3].copy_from_slice(&[out[2], out[1], out[0]].map(|c| (c * 255.0).round() as u8));
+            }
+        }
+        unsafe {
+            let bmp = crate::desklayer::graphite_snapshots::bitmap(&cv.dc, &image);
+            let sampling = D2D1_BITMAP_BRUSH_PROPERTIES1 {
+                extendModeX: D2D1_EXTEND_MODE_CLAMP,
+                extendModeY: D2D1_EXTEND_MODE_CLAMP,
+                interpolationMode: D2D1_INTERPOLATION_MODE_LINEAR,
+            };
+            let brush_props = D2D1_BRUSH_PROPERTIES {
+                opacity: 1.0,
+                transform: Matrix3x2 {
+                    M11: self.size.0 / image.width as f32,
+                    M22: self.size.1 / image.height as f32,
+                    ..Matrix3x2::identity()
+                },
+            };
+            let brush = cv.dc.CreateBitmapBrush(&bmp, Some(&sampling), Some(&brush_props)).unwrap();
+            cv.dc.FillRoundedRectangle(&D2D1_ROUNDED_RECT { rect: r, radiusX: radius, radiusY: radius }, &brush);
+        }
+    }
+}
+
+pub(crate) fn draw_plate_on(
+    cv: &Canvas,
+    r: D2D_RECT_F,
+    p: &Plate,
+    backdrop: Option<(&GlassWallpaper<'_>, &Theme, crate::theme::Material)>,
+) {
+    let (x, y, w, h) = (r.left, r.top, r.right - r.left, r.bottom - r.top);
     unsafe { crate::gfx::soft_shadows(&cv.dc, r, p.radius, &p.shadows).unwrap() };
     if p.contact.a > 0 {
         let k = crate::theme::CONTACT_W;
@@ -535,7 +589,11 @@ pub fn draw_plate(cv: &Canvas, x: f32, y: f32, w: f32, h: f32, p: &Plate) {
     // The backdrop brush: opaque on screen, so nothing under the plate
     // (its own shadows) shows through the tint.
     if let Some(g) = p.ground {
-        cv.fill_rr(r, p.radius, g);
+        if let Some((wall, theme, material)) = backdrop {
+            wall.draw(cv, r, p.radius, theme, material);
+        } else {
+            cv.fill_rr(r, p.radius, g);
+        }
     }
     match p.fall {
         Some(_) => unsafe { crate::gfx::parts::plate_fill(&cv.dc, r, p.radius, p.fall, p.tint).unwrap() },

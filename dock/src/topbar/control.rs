@@ -2411,3 +2411,5 @@ mod tests;
 #[cfg(test)]
 #[path = "control_harmony.rs"]
 mod harmony;
+#[cfg(test)]
+pub(super) use harmony::paint_site_control;

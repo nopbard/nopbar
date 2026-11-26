@@ -72,7 +72,7 @@ pub(crate) mod graphite_snapshots;
 #[cfg(test)]
 mod handling_snapshots;
 #[cfg(test)]
-pub(crate) use handling_snapshots::render_readme_widgets;
+pub(crate) use handling_snapshots::{paint_site_widgets, render_readme_widgets};
 
 /// Settings > widgets changed (or any config was applied: what did not
 /// change costs nothing): which widgets are on the desktop, and whether

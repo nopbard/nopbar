@@ -1118,6 +1118,9 @@ mod tests {
     #[test]
     fn a_slow_wifi_list_shows_the_ring_then_fails() {
         use std::time::Duration;
+        // The retry label is compared with t(): hold the language, other
+        // tests switch it in parallel (a CI run saw "다시 시도" here).
+        let _l = crate::i18n::test_lock("en");
         // Nothing runs: a fetch starts. One running: waited for (the ring)
         // until WIFI_GIVE_UP, then it failed (the row with its button).
         assert_eq!(wifi_wait(None), None);
