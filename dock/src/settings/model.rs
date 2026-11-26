@@ -17,6 +17,7 @@ pub enum Ctl {
     Menu { opts: &'static [&'static str], get: fn(&Config) -> usize, set: fn(&mut Config, usize) },
     /// Does something right away (not a setting). `text`: its text key.
     Button { text: &'static str },
+    Navigate { tab: Tab, value: fn(&Config) -> &'static str },
     /// A shortcut from crate::shortcuts (a key recorder, a switch or a
     /// fixed chord, by its kind), with its Reset.
     Shortcut { id: &'static str },
@@ -860,6 +861,9 @@ pub fn sections() -> Vec<Section> {
                 header("group.companion.activities", "companion.group.activities"),
                 row("companion.situations", "companion.situations", "companion.situations.subtitle", toggle!(companion.situations)),
                 row("companion.download_notifications", "assistant.download_setting", "", toggle!(companion.download_notifications)),
+                row("action.agent_notifications", "settings.tab.agents", "", Ctl::Navigate {
+                    tab: Tab::Agents, value: super::agent_notifications::summary,
+                }),
                 row("companion.day_wrap", "assistant.wrap", "", toggle!(companion.day_wrap)),
                 row("companion.morning_briefing", "assistant.morning", "", toggle!(companion.morning_briefing)),
                 row("action.capture_privacy", "widgets.hide_from_capture", "widgets.hide_from_capture.hint", Ctl::Button { text: "dock.menu.open" }),
@@ -958,7 +962,7 @@ fn digits_set(c: &mut Config, i: usize) {
 /// Is row `r` a shortcut that can be changed (not a heading, not fixed)?
 pub fn is_setting(r: &Row) -> bool {
     match r.ctl {
-        Ctl::Button { .. } | Ctl::Header | Ctl::Fold { .. } => false,
+        Ctl::Button { .. } | Ctl::Navigate { .. } | Ctl::Header | Ctl::Fold { .. } => false,
         Ctl::Shortcut { id } => shortcuts::find(id).is_some_and(|s| s.kind != SKind::Fixed),
         _ => true,
     }
@@ -1025,7 +1029,7 @@ pub fn same_value(a: &Config, b: &Config, key: &str) -> bool {
         Ctl::Slider { get, .. } => get(a) == get(b),
         Ctl::Choice { get, .. } | Ctl::Menu { get, .. } => get(a) == get(b),
         Ctl::Shortcut { id } => a.shortcut(id) == b.shortcut(id),
-        Ctl::Button { .. } | Ctl::Header | Ctl::Fold { .. } => true,
+        Ctl::Button { .. } | Ctl::Navigate { .. } | Ctl::Header | Ctl::Fold { .. } => true,
     })
 }
 
@@ -1421,7 +1425,7 @@ pub fn apply_keys(from: &Config, to: &mut Config, keys: &[String]) {
             Ctl::Slider { get, set, min, max, .. } => set(to, get(from).clamp(min, max)),
             Ctl::Choice { get, set, opts } | Ctl::Menu { get, set, opts } => set(to, get(from).min(opts.len() - 1)),
             Ctl::Shortcut { id } => to.set_shortcut(id, &from.shortcut(id)),
-            Ctl::Button { .. } | Ctl::Header | Ctl::Fold { .. } => {}
+            Ctl::Button { .. } | Ctl::Navigate { .. } | Ctl::Header | Ctl::Fold { .. } => {}
         }
     }
 }
@@ -1530,7 +1534,7 @@ mod tests {
                         c.set_shortcut(id, v);
                         assert_eq!(c.shortcut(id), v, "{}", r.label);
                     }
-                    Ctl::Button { .. } | Ctl::Header | Ctl::Fold { .. } => {}
+                    Ctl::Button { .. } | Ctl::Navigate { .. } | Ctl::Header | Ctl::Fold { .. } => {}
                 }
             }
         }

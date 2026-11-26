@@ -137,7 +137,7 @@ fn scales() -> Vec<f32> {
 /// drawn over on screen): a neutral grey desktop with a document window
 /// on it (a title, lines of text, a dark picture), blurred for real
 /// (GaussianBlur, as DWM's), under the system's acrylic tint.
-unsafe fn acrylic(dc: &ID2D1DeviceContext, w: f32, h: f32, light: bool) {
+unsafe fn acrylic(dc: &ID2D1DeviceContext, w: f32, h: f32, light: bool, light_wall: bool) {
     use windows::core::Interface;
     use windows::Win32::Graphics::Direct2D::Common::D2D1_COMPOSITE_MODE_SOURCE_OVER;
     use windows::Win32::Graphics::Direct2D::{ID2D1Image, CLSID_D2D1GaussianBlur, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_PROPERTY_TYPE_FLOAT, D2D1_ROUNDED_RECT};
@@ -156,7 +156,7 @@ unsafe fn acrylic(dc: &ID2D1DeviceContext, w: f32, h: f32, light: bool) {
     let cl = dc.CreateCommandList().unwrap();
     let old = dc.GetTarget().unwrap();
     dc.SetTarget(&cl);
-    fill(dc, all, 0.0, if light { g(0.78) } else { g(0.20) });
+    fill(dc, all, 0.0, if light_wall { g(0.78) } else { g(0.20) });
     // The document: from a third of the way across to past the right.
     let (dx, dy) = (w * 0.34, 40.0);
     fill(dc, rect(dx, dy, w + 40.0, h - 30.0), 8.0, g(0.98));
@@ -184,6 +184,10 @@ unsafe fn acrylic(dc: &ID2D1DeviceContext, w: f32, h: f32, light: bool) {
 /// One paint of the window at `w` x `h` DIPs and `scale`: its hits, the
 /// content's height, and the pixels.
 fn paint(h: &mut Harness, w: f32, ht: f32, scale: f32) -> (Vec<(D2D_RECT_F, Hit)>, f32, Vec<u8>, u32, u32) {
+    paint_on(h, w, ht, scale, h.app.light)
+}
+
+fn paint_on(h: &mut Harness, w: f32, ht: f32, scale: f32, light_wall: bool) -> (Vec<(D2D_RECT_F, Hit)>, f32, Vec<u8>, u32, u32) {
     SIZE.with(|s| s.set((w, ht)));
     h.app.scale = scale;
     h.app.page_anim = None;
@@ -196,7 +200,7 @@ fn paint(h: &mut Harness, w: f32, ht: f32, scale: f32) -> (Vec<(D2D_RECT_F, Hit)
         dc.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         dc.SetTransform(&Matrix3x2 { M11: scale, M12: 0.0, M21: 0.0, M22: scale, M31: 0.0, M32: 0.0 });
         if !h.app.solid {
-            acrylic(&dc, w, ht, h.app.light);
+            acrylic(&dc, w, ht, h.app.light, light_wall);
         }
         let c = h.app.paint(&dc, &mut hits).unwrap();
         dc.EndDraw(None, None).unwrap();
@@ -219,6 +223,65 @@ fn full_height(h: &mut Harness) -> f32 {
     } else {
         (top + content_h + super::FOOTER).max(super::H0).ceil()
     }
+}
+
+#[test]
+#[ignore = "writes agent notification navigation offscreen"]
+fn gnome_b_render_matrix_settings() {
+    use crate::companion::chat::cli;
+    let _lang = crate::i18n::test_lock("ko");
+    let _tools = cli::test_detections(cli::Status::Missing, cli::Status::Missing);
+    let root = PathBuf::from(std::env::var_os("NOPBAR_GNOME_RENDER_DIR").expect("render output directory"));
+    let mut h = harness(false);
+    h.app.section = h.app.sections.iter().position(|s| s.tab == model::Tab::Companion).unwrap();
+    let ri = h.app.rows().iter().position(|r| r.key == "action.agent_notifications").unwrap();
+    for (name, installed, on) in [("off", true, false), ("on", true, true), ("disconnected", false, false)] {
+        super::agent_notifications::test_codex_installed(installed);
+        h.app.cfg.set_agent_notifications(1, on);
+        for (light, ui) in [(true, "light"), (false, "dark")] {
+            set_look_in(&mut h, light, "glass");
+            let ht = full_height(&mut h);
+            for (light_wall, wall) in [(true, "light"), (false, "dark")] {
+                for (dpi, scale) in [(1., 100), (1.5, 150)] {
+                    let (hits, _, px, w, hh) = paint_on(&mut h, super::W0, ht, dpi, light_wall);
+                    assert!(hits.iter().any(|(_, hit)| *hit == Hit::Button(ri)));
+                    let dir = root.join(format!("{ui}-on-{wall}-{scale}"));
+                    save_png(&px, w, hh, &dir.join(format!("settings-{name}.png")));
+                }
+            }
+        }
+    }
+    super::agent_notifications::test_codex_installed(true);
+}
+
+#[test]
+#[ignore = "writes Codex lifecycle connection states offscreen"]
+fn codex_hook_status_offscreen() {
+    use crate::agents::connect::CodexHookStatus;
+    use crate::companion::chat::cli;
+    let _lang = crate::i18n::test_lock("ko");
+    let _tools = cli::test_detections(cli::Status::Missing, cli::Status::Missing);
+    let root = PathBuf::from(std::env::var_os("NOPBAR_GNOME_RENDER_DIR").expect("render output directory"));
+    let mut h = harness(false);
+    h.app.section = h.app.sections.iter().position(|s| s.tab == model::Tab::Agents).unwrap();
+    let ri = h.app.rows().iter().position(|r| r.key == "chat.codex_mcp").unwrap();
+    h.app.cfg.set_agent_notifications(1, true);
+    for (status, name) in [(CodexHookStatus::Ready, "ready"), (CodexHookStatus::Reconnect, "reconnect"), (CodexHookStatus::Failed, "failed")] {
+        super::agent_notifications::test_codex_hook_status(status);
+        for (light, ui) in [(true, "light"), (false, "dark")] {
+            set_look_in(&mut h, light, "glass");
+            let ht = full_height(&mut h);
+            for (light_wall, wall) in [(true, "light"), (false, "dark")] {
+                for (dpi, scale) in [(1., 100), (1.5, 150)] {
+                    let (hits, _, px, w, hh) = paint_on(&mut h, super::W0, ht, dpi, light_wall);
+                    assert_eq!(hits.iter().any(|(_, hit)| *hit == Hit::RowFix(ri)), status != CodexHookStatus::Ready);
+                    let dir = root.join(format!("{ui}-on-{wall}-{scale}"));
+                    save_png(&px, w, hh, &dir.join(format!("codex-hooks-{name}.png")));
+                }
+            }
+        }
+    }
+    super::agent_notifications::test_codex_hook_status(CodexHookStatus::Ready);
 }
 
 #[test]

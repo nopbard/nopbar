@@ -2012,7 +2012,7 @@ impl App {
             Hit::ShortcutReset(ri) => self.reset_shortcut(ri),
             Hit::RowFix(ri) => {
                 if let Some((_, Some(fix))) = self.rows().get(ri).and_then(|r| self.row_note(r.key)) {
-                    fix.run();
+                    fix.run(self.hwnd);
                 }
             }
             Hit::Tab(k) => {
@@ -2068,7 +2068,7 @@ impl App {
                     .get(ri)
                     .is_some_and(|r| agent_notifications::provider(r.key).is_some()) =>
             {
-                let (provider,on)=match self.rows()[ri].key {"chat.claude_mcp"=>(0,!self.cfg.chat.claude_mcp),"chat.codex_mcp"=>(1,!self.cfg.chat.codex_mcp),_=>(2,!self.cfg.chat.antigravity_mcp)};
+                let (provider,on)=match self.rows()[ri].key {"chat.claude_mcp"=>(0,!self.cfg.chat.claude_mcp),"chat.codex_mcp"=>(1,!(self.cfg.agents.codex || self.cfg.chat.codex_mcp)),_=>(2,!self.cfg.chat.antigravity_mcp)};
                 crate::companion::chat::settings::set_mcp(self.hwnd,provider,on);
                 self.redraw();
             }
@@ -2140,6 +2140,13 @@ impl App {
             }
             Hit::WelcomeBack | Hit::WelcomeNext | Hit::WelcomeSkip => self.welcome_move(h),
             Hit::Theme(_) | Hit::Link(_) => self.click_extra(h),
+            Hit::Button(ri) if matches!(self.row_ctl(ri), Some(Ctl::Navigate { .. })) => {
+                if let Some(Ctl::Navigate { tab, .. }) = self.row_ctl(ri) {
+                    if let Some(i) = model::Tab::ALL.iter().position(|candidate| candidate == tab) {
+                        self.click(Hit::Tab(i), 0.0);
+                    }
+                }
+            }
             // Theme files go in this folder (made if it is not there yet).
             Hit::Button(ri) if self.rows().get(ri).map(|r| r.key) == Some("action.themes_folder") => {
                 let dir = crate::config::app_dir().join("themes");

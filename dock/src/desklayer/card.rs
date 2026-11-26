@@ -458,6 +458,7 @@ pub enum Kind {
 /// A line glyph on the 24-unit grid (mock4.html's symbols).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mark {
+    Agent(crate::agents::Agent),
     Note,
     Inbox,
     Battery,
@@ -484,6 +485,12 @@ pub unsafe fn mark(dc: &ID2D1DeviceContext, gfx: &Gfx, m: Mark, x: f32, y: f32, 
     let line = |a: (f32, f32), b: (f32, f32)| dc.DrawLine(p(a.0, a.1), p(b.0, b.1), &brush, sw, &style);
     let dot = |a: f32, b: f32| dc.FillEllipse(&D2D1_ELLIPSE { point: p(a, b), radiusX: sw / 2., radiusY: sw / 2. }, &brush);
     match m {
+        Mark::Agent(agent) => {
+            let color = rgba(ink);
+            if crate::glyphs::provider_logo(dc, agent.title(), x, y, size, color).is_err() {
+                crate::glyphs::draw(dc, crate::glyphs::Glyph::Terminal, x + size / 2., y + size / 2., size, color)?;
+            }
+        }
         Mark::Note => {
             dc.DrawRoundedRectangle(&rr(r(4.5, 3.5, 15., 17.), 3. * u), &brush, sw, &style);
             line((8., 8.5), (16., 8.5));

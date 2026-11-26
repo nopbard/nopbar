@@ -2,7 +2,7 @@
 use super::{reminders::Notice, runtime::{self, Action}};
 use windows::{core::w, Win32::{Foundation::{LPARAM, WPARAM}, System::DataExchange::COPYDATASTRUCT, UI::WindowsAndMessaging::*}};
 
-const SCHEME: &str = "nopbar-note";
+pub(crate) const SCHEME: &str = "nopbar-note";
 const COPY_ID: usize = 0x4e5231;
 
 #[derive(Debug, PartialEq)]

@@ -28,7 +28,7 @@ pub fn listen() {
     ONCE.call_once(pipe::listen);
 }
 
-use std::sync::Mutex;
+use std::{collections::VecDeque, sync::Mutex};
 use std::time::{Duration, Instant};
 
 /// A session's state: working, waiting for its person, or done.
@@ -74,9 +74,15 @@ impl Agent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ev {
     To(St),
+    /// Compatibility for installations that only registered Codex notify.
+    LegacyDone,
     Failure,
     /// The session ended (Claude's SessionEnd).
     End,
+    /// Remember a Codex tool invocation before it can request approval.
+    TrackTool,
+    /// A tool returned after the session was waiting for approval.
+    Resume,
     /// Claude's "still idle" reminder: a working session that never said
     /// Stop (stopped with Esc, or an error) is done; else nothing.
     Idle,
@@ -92,7 +98,8 @@ pub enum Ev {
 ///   minute after a turn = Idle (a turn stopped with Esc never says Stop);
 ///   other notifications (signed in, …) = nothing; Stop and StopFailure =
 ///   done; SessionEnd = gone.
-/// - Codex's notify only tells a turn's end: done.
+/// - Codex lifecycle hooks report prompts, approval, resolution and completion.
+///   Legacy notify events have a separate identity.
 pub fn event_of(agent: Agent, name: &str, ntype: &str) -> Ev {
     match (agent, name) {
         (Agent::Claude, "UserPromptSubmit" | "PostToolUse") => Ev::To(St::Work),
@@ -103,7 +110,13 @@ pub fn event_of(agent: Agent, name: &str, ntype: &str) -> Ev {
         (Agent::Claude, "Stop") => Ev::To(St::Done),
         (Agent::Claude, "StopFailure") => Ev::Failure,
         (Agent::Claude, "SessionEnd") => Ev::End,
-        (Agent::Codex, "agent-turn-complete") => Ev::To(St::Done),
+        (Agent::Codex, "UserPromptSubmit") => Ev::To(St::Work),
+        (Agent::Codex, "PreToolUse") => Ev::TrackTool,
+        (Agent::Codex, "PermissionRequest") => Ev::To(St::Wait),
+        (Agent::Codex, "PostToolUse") => Ev::Resume,
+        (Agent::Codex, "Stop") => Ev::To(St::Done),
+        (Agent::Codex, "Interrupt" | "SessionEnd") => Ev::End,
+        (Agent::Codex, "agent-turn-complete") => Ev::LegacyDone,
         _ => Ev::Ignore,
     }
 }
@@ -112,6 +125,7 @@ pub fn event_of(agent: Agent, name: &str, ntype: &str) -> Ev {
 const MAX_TEXT: usize = 512;
 /// Sessions kept at most (the oldest finished ones go first).
 const MAX_SESSIONS: usize = 24;
+const MIN_NOTICE_TIME: Duration = Duration::from_secs(60);
 /// A working session nothing was heard from for this long no longer keeps
 /// the PC awake (a turn ended without a word: a crash, a lost line).
 pub const STALE: Duration = Duration::from_secs(30 * 60);
@@ -132,6 +146,9 @@ pub struct Msg {
     /// When the hook ran (FILETIME, 100 ns; 0: not told): a line older
     /// than the last one heard for its session is dropped (hooks race).
     pub t: u64,
+    turn: String,
+    tool_call: String,
+    tool_key: String,
 }
 
 fn text(v: &serde_json::Value, key: &str) -> String {
@@ -163,6 +180,9 @@ impl Msg {
             hwnd: v.get("hwnd").and_then(|n| n.as_i64()).unwrap_or(0) as isize,
             host_exe: text(v, "host_exe"),
             t: num(v, "t"),
+            turn: text(v, "turn"),
+            tool_call: text(v, "tool_call"),
+            tool_key: text(v, "tool_key"),
         })
     }
 }
@@ -191,30 +211,155 @@ pub struct Session {
     pub host_pid: u32,
     pub hwnd: isize,
     pub host_exe: String,
+    front_at_wait: bool,
+    started: Option<Instant>,
     /// The last line heard: when (STALE) and its hook's time.
     heard: Instant,
     last_t: u64,
+    codex: CodexTurn,
+}
+
+/// Call IDs observed before approval, and which calls are awaiting input.
+/// An approval with no unambiguous call remains pending until the turn ends.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct CodexTurn {
+    id: String,
+    calls: Vec<(String, String)>,
+    waiting: Vec<String>,
+    incomplete: bool,
+}
+
+impl CodexTurn {
+    const MAX_CALLS: usize = 128;
+
+    fn track(&mut self, m: &Msg) {
+        if self.calls.len() < Self::MAX_CALLS {
+            self.calls.push((m.tool_call.clone(), m.tool_key.clone()));
+        } else {
+            self.incomplete = true;
+        }
+    }
+
+    fn wait(&mut self, m: &Msg) {
+        let call = if !m.tool_call.is_empty() {
+            Some(&m.tool_call)
+        } else if !self.incomplete && !m.tool_key.is_empty() {
+            let mut matches = self.calls.iter().filter(|(_, key)| key == &m.tool_key);
+            match (matches.next(), matches.next()) {
+                (Some((call, _)), None) => Some(call),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(call) = call {
+            if self.waiting.contains(call) {
+                return;
+            }
+            if self.waiting.len() < Self::MAX_CALLS {
+                self.waiting.push(call.clone());
+                return;
+            }
+        }
+        if !self.waiting.iter().any(String::is_empty) {
+            self.waiting.push(String::new());
+        }
+    }
+
+    fn finish(&mut self, call: &str) -> bool {
+        if call.is_empty() {
+            return false;
+        }
+        self.calls.retain(|(id, _)| id != call);
+        let before = self.waiting.len();
+        self.waiting.retain(|id| id != call);
+        before != 0 && self.waiting.is_empty()
+    }
 }
 
 /// Every session heard of, in the order they came.
 #[derive(Default)]
 pub struct Board {
     sessions: Vec<Session>,
+    completions: VecDeque<Completion>,
+    ended_turns: VecDeque<(String, String)>,
+}
+
+pub(crate) struct Completion {
+    pub session: Session,
+    pub elapsed: Duration,
 }
 
 impl Board {
     pub const fn new() -> Board {
-        Board { sessions: Vec::new() }
+        Board { sessions: Vec::new(), completions: VecDeque::new(), ended_turns: VecDeque::new() }
     }
 
     /// Pure: what `m` changes (true: something did).
+    #[cfg(test)]
     pub fn apply(&mut self, m: &Msg, now: Instant) -> bool {
-        let key = format!("{}:{}", m.agent.id(), m.session);
+        self.apply_event(m, now, |_| false)
+    }
+
+    fn apply_event(&mut self, m: &Msg, now: Instant, foreground: impl FnOnce(&Session) -> bool) -> bool {
+        let session_key = format!("{}:{}", m.agent.id(), m.session);
+        let key = if m.ev == Ev::LegacyDone {
+            if self.sessions.iter().any(|s| s.key == session_key) {
+                return false;
+            }
+            format!("codex-notify:{}", m.session)
+        } else {
+            session_key
+        };
+        let has_turn = m.agent == Agent::Codex && !m.turn.is_empty();
+        if has_turn && self.ended_turns.iter().any(|(session, turn)| session == &key && turn == &m.turn) {
+            return false;
+        }
+        if m.ev == Ev::TrackTool && (!has_turn || m.tool_call.is_empty() || m.tool_key.is_empty()) {
+            return false;
+        }
         let at = self.sessions.iter().position(|s| s.key == key);
+        let same_turn = has_turn && at.is_some_and(|i| self.sessions[i].codex.id == m.turn);
+        let new_turn = has_turn && !same_turn;
+        if m.ev == Ev::End && has_turn {
+            if self.ended_turns.len() == MAX_SESSIONS {
+                self.ended_turns.pop_front();
+            }
+            self.ended_turns.push_back((key.clone(), m.turn.clone()));
+            if at.is_some_and(|i| !same_turn && !self.sessions[i].codex.id.is_empty()) {
+                return false;
+            }
+        }
+
+        let resumed = if m.ev == Ev::Resume {
+            let Some(s) = at.filter(|_| same_turn).map(|i| &mut self.sessions[i]) else { return false };
+            if !s.codex.finish(&m.tool_call) || s.st != St::Wait {
+                return false;
+            }
+            true
+        } else {
+            false
+        };
+
         let new_completion = m.t != 0 && at.is_some_and(|i| m.t > self.sessions[i].last_t);
         if let Some(i) = at {
             let s = &mut self.sessions[i];
-            if m.t != 0 && m.t < s.last_t {
+            if same_turn {
+                match (m.ev, s.st) {
+                    (Ev::TrackTool, St::Work | St::Wait) => {
+                        s.codex.track(m);
+                        return false;
+                    }
+                    (Ev::TrackTool | Ev::To(St::Wait | St::Work), St::Done) => return false,
+                    (Ev::To(St::Work), St::Wait) => {
+                        // An async prompt can reach the board after the synchronous approval.
+                        s.started.get_or_insert(now);
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            if !resumed && m.t != 0 && m.t < s.last_t {
                 return false;
             }
             s.heard = now;
@@ -222,7 +367,8 @@ impl Board {
         }
         let st = match m.ev {
             Ev::To(st) => st,
-            Ev::Failure => St::Done,
+            Ev::Failure | Ev::LegacyDone => St::Done,
+            Ev::TrackTool | Ev::Resume => St::Work,
             Ev::End => {
                 return at.map(|i| self.sessions.remove(i)).is_some();
             }
@@ -237,7 +383,12 @@ impl Board {
             Some(i) => {
                 let s = &mut self.sessions[i];
                 let before = s.clone();
-                if s.st != st || s.failed != (m.ev == Ev::Failure)
+                if new_turn {
+                    s.codex = CodexTurn { id: m.turn.clone(), ..CodexTurn::default() };
+                    s.started = None;
+                }
+                let entered_wait = (s.st != St::Wait || new_turn) && st == St::Wait;
+                if s.st != st || new_turn || s.failed != (m.ev == Ev::Failure)
                     || st == St::Done && new_completion
                 {
                     s.st = st;
@@ -255,10 +406,31 @@ impl Board {
                 if m.agent_pid != 0 {
                     s.agent_pid = m.agent_pid;
                 }
+                if m.ev == Ev::TrackTool {
+                    s.codex.track(m);
+                }
+                if st == St::Wait && has_turn {
+                    s.codex.wait(m);
+                }
+                if entered_wait {
+                    s.front_at_wait = foreground(s);
+                } else if st == St::Work {
+                    s.started.get_or_insert(now);
+                } else if st == St::Done {
+                    s.codex.calls.clear();
+                    s.codex.waiting.clear();
+                    let elapsed = s.started.take().map(|start| now.saturating_duration_since(start));
+                    if let Some(elapsed) = elapsed.filter(|d| *d >= MIN_NOTICE_TIME && m.ev != Ev::Idle && !foreground(s)) {
+                        if self.completions.len() == MAX_SESSIONS {
+                            self.completions.pop_front();
+                        }
+                        self.completions.push_back(Completion { session: s.clone(), elapsed });
+                    }
+                }
                 *s != before
             }
             None => {
-                self.sessions.push(Session {
+                let mut session = Session {
                     key,
                     agent: m.agent,
                     name,
@@ -269,9 +441,21 @@ impl Board {
                     host_pid: m.host_pid,
                     hwnd: m.hwnd,
                     host_exe: m.host_exe.clone(),
+                    front_at_wait: false,
+                    started: (st == St::Work).then_some(now),
                     heard: now,
                     last_t: m.t,
-                });
+                    codex: CodexTurn { id: m.turn.clone(), ..CodexTurn::default() },
+                };
+                if st == St::Wait {
+                    session.front_at_wait = foreground(&session);
+                    if has_turn {
+                        session.codex.wait(m);
+                    }
+                } else if m.ev == Ev::TrackTool {
+                    session.codex.track(m);
+                }
+                self.sessions.push(session);
                 while self.sessions.len() > MAX_SESSIONS {
                     // The oldest finished one, else the oldest.
                     let i = self.sessions.iter().position(|s| s.st == St::Done).unwrap_or(0);
@@ -319,6 +503,7 @@ pub(crate) fn with_test_session(st: St, check: impl FnOnce()) {
         agent: Agent::Claude, ev: Ev::To(st), session: "island-regression".into(),
         cwd: "test-project".into(), agent_pid: 0, host_pid: 0, hwnd: 0,
         host_exe: String::new(), t: 0,
+        turn: String::new(), tool_call: String::new(), tool_key: String::new(),
     }, Instant::now());
     let _restore = Restore(Some(std::mem::replace(&mut *BOARD.lock().unwrap(), board)));
     check();
@@ -341,11 +526,128 @@ pub fn ingest(v: &serde_json::Value) {
     if !local_exe(&m.host_exe) {
         m.host_exe.clear();
     }
-    let changed = with(|b| b.apply(&m, Instant::now())).unwrap_or(false);
+    let changed = with(|b| b.apply_event(&m, Instant::now(), Session::foreground)).unwrap_or(false);
     if changed {
         changed_now();
         watch_processes();
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Target {
+    key: String,
+    agent_pid: u32,
+    agent: Agent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Wait {
+    pub target: Target,
+    pub since: Instant,
+}
+
+impl Session {
+    pub(crate) fn target(&self) -> Target {
+        Target { key: self.key.clone(), agent_pid: self.agent_pid, agent: self.agent }
+    }
+
+    pub(crate) fn wait(&self) -> Wait {
+        Wait { target: self.target(), since: self.since }
+    }
+
+    pub(crate) fn wait_was_foreground(&self) -> bool {
+        self.front_at_wait
+    }
+
+    fn window(&self) -> Option<windows::Win32::Foundation::HWND> {
+        use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow}};
+        if self.host_pid == 0 {
+            return None;
+        }
+        let reported = HWND(self.hwnd as *mut _);
+        let mut owner = 0;
+        unsafe {
+            if IsWindow(Some(reported)).as_bool() {
+                GetWindowThreadProcessId(reported, Some(&mut owner));
+                if owner == self.host_pid {
+                    return Some(reported);
+                }
+            }
+        }
+        if self.host_exe.is_empty() || !connect::same_path(&self.host_exe, &hook::exe_path(self.host_pid)) {
+            return None;
+        }
+        hook::top_windows().get(&self.host_pid).map(|h| HWND(*h as *mut _))
+    }
+
+    pub(crate) fn foreground(&self) -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, GA_ROOTOWNER};
+        let foreground = unsafe { GetForegroundWindow() };
+        if foreground.0.is_null() || self.host_pid == 0 {
+            return false;
+        }
+        let root = unsafe { GetAncestor(foreground, GA_ROOTOWNER) };
+        let mut owner = 0;
+        unsafe { GetWindowThreadProcessId(root, Some(&mut owner)); }
+        owner == self.host_pid && self.window().is_some_and(|h| h == foreground || h == root)
+    }
+}
+
+fn notification_setting(agent: Agent, want: (bool, bool)) -> bool {
+    match agent {
+        Agent::Claude => want.0,
+        Agent::Codex => want.1,
+    }
+}
+
+pub(crate) fn waiting_sessions() -> Vec<Session> {
+    let want = WANT.lock().ok().and_then(|w| *w).unwrap_or_default();
+    with(|b| b.sessions.iter()
+        .filter(|s| s.st == St::Wait && notification_setting(s.agent, want))
+        .cloned().collect()).unwrap_or_default()
+}
+
+pub(crate) fn take_completions() -> Vec<Completion> {
+    let want = WANT.lock().ok().and_then(|w| *w).unwrap_or_default();
+    with(|b| b.completions.drain(..)
+        .filter(|c| notification_setting(c.session.agent, want))
+        .collect()).unwrap_or_default()
+}
+
+fn target_session(target: &Target) -> Option<Session> {
+    with(|b| b.sessions.iter()
+        .find(|s| s.key == target.key && s.agent_pid == target.agent_pid).cloned()).flatten()
+}
+
+pub(crate) fn show_result_for(target: &Target) -> bool {
+    let want = WANT.lock().ok().and_then(|w| *w).unwrap_or_default();
+    notification_setting(target.agent, want) && !target_session(target).is_some_and(|s| s.foreground())
+}
+
+pub(crate) fn focus(target: &Target) {
+    if let Some(window) = target_session(target).and_then(|session| session.window()) {
+        crate::dock::bring_to_front(window);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_session(agent: Agent, name: &str, st: St, now: Instant, foreground: bool) -> Session {
+    let mut board = Board::new();
+    board.apply_event(&Msg {
+        agent,
+        ev: Ev::To(st),
+        session: name.into(),
+        cwd: format!("C:/fixture/{name}"),
+        agent_pid: 0,
+        host_pid: 0,
+        hwnd: 0,
+        host_exe: String::new(),
+        t: 0,
+        turn: String::new(),
+        tool_call: String::new(),
+        tool_key: String::new(),
+    }, now, |_| foreground);
+    board.sessions.pop().unwrap()
 }
 
 /// Everything that follows a change of the board.
@@ -495,7 +797,10 @@ fn sync_files() {
                 }
                 continue;
             }
-            Some(job) => connect::notifications(agent, &places, job, |on| {
+            Some(job) => connect::notifications(agent, &places, match (agent, job) {
+                (Agent::Codex, Job::Connect) => Job::Ensure,
+                _ => job,
+            }, |on| {
                 crate::companion::chat::connect::set(agent == Agent::Claude, on)
             }),
         };
@@ -530,7 +835,48 @@ mod tests {
     use super::*;
 
     fn msg(agent: Agent, session: &str, ev: Ev) -> Msg {
-        Msg { agent, ev, session: session.into(), cwd: format!(r"C:\work\{session}"), agent_pid: 10, host_pid: 20, hwnd: 30, host_exe: r"C:\Orca\Orca.exe".into(), t: 0 }
+        Msg { agent, ev, session: session.into(), cwd: format!(r"C:\work\{session}"), agent_pid: 10, host_pid: 20, hwnd: 30, host_exe: r"C:\Orca\Orca.exe".into(), t: 0, turn: String::new(), tool_call: String::new(), tool_key: String::new() }
+    }
+
+    #[test]
+    fn completion_uses_first_work_across_wait_and_records_failure() {
+        let mut board = Board::new();
+        let now = Instant::now();
+        let state = |event| msg(Agent::Claude, "project", event);
+        board.apply(&state(Ev::To(St::Work)), now);
+        board.apply(&state(Ev::To(St::Wait)), now + Duration::from_secs(15));
+        board.apply(&state(Ev::To(St::Work)), now + Duration::from_secs(30));
+        board.apply(&state(Ev::Failure), now + MIN_NOTICE_TIME);
+        board.apply(&state(Ev::Failure), now + MIN_NOTICE_TIME);
+        board.apply(&state(Ev::To(St::Work)), now + Duration::from_secs(61));
+        let result = board.completions.pop_front().unwrap();
+        assert_eq!(result.elapsed, MIN_NOTICE_TIME);
+        assert!(result.session.failed);
+        assert!(board.completions.is_empty());
+    }
+
+    #[test]
+    fn completion_skips_short_unobserved_foreground_and_idle_turns() {
+        let now = Instant::now();
+        let state = |event| msg(Agent::Claude, "project", event);
+        for (duration, event, started, foreground) in [
+            (59, Ev::To(St::Done), true, false),
+            (60, Ev::To(St::Done), false, false),
+            (60, Ev::To(St::Done), true, true),
+            (60, Ev::Idle, true, false),
+        ] {
+            let mut board = Board::new();
+            if started {
+                board.apply(&state(Ev::To(St::Work)), now);
+            }
+            board.apply_event(&state(event), now + Duration::from_secs(duration), |_| foreground);
+            assert!(board.completions.is_empty(), "{event:?}");
+        }
+        let mut board = Board::new();
+        board.apply(&state(Ev::To(St::Work)), now);
+        board.apply(&state(Ev::To(St::Done)), now + MIN_NOTICE_TIME);
+        assert_eq!(board.completions.len(), 1);
+        assert!(!board.completions[0].session.failed);
     }
 
     #[test]
@@ -547,8 +893,63 @@ mod tests {
         assert_eq!(event_of(Agent::Claude, "Stop", ""), Ev::To(St::Done));
         assert_eq!(event_of(Agent::Claude, "SessionEnd", ""), Ev::End);
         assert_eq!(event_of(Agent::Claude, "PreCompact", ""), Ev::Ignore);
-        assert_eq!(event_of(Agent::Codex, "agent-turn-complete", ""), Ev::To(St::Done));
-        assert_eq!(event_of(Agent::Codex, "Stop", ""), Ev::Ignore);
+        for (name, expected) in [
+            ("UserPromptSubmit", Ev::To(St::Work)),
+            ("PreToolUse", Ev::TrackTool),
+            ("PermissionRequest", Ev::To(St::Wait)),
+            ("PostToolUse", Ev::Resume),
+            ("Stop", Ev::To(St::Done)),
+            ("Interrupt", Ev::End),
+            ("SessionEnd", Ev::End),
+            ("agent-turn-complete", Ev::LegacyDone),
+        ] {
+            assert_eq!(event_of(Agent::Codex, name, ""), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn codex_resumes_only_when_the_waiting_calls_finish() {
+        let t0 = Instant::now();
+        let mut board = Board::new();
+        let signal = |event, call, command: &str, turn, t| {
+            let payload = serde_json::json!({
+                "session_id": "s1", "hook_event_name": event, "turn_id": turn,
+                "tool_use_id": call, "tool_name": "Bash", "tool_input": {"command": command},
+            });
+            let raw = hook::line(Agent::Codex, &payload, &hook::Found::default(), "", t);
+            assert!(!raw.contains("fixture command"));
+            Msg::parse(&serde_json::from_str(&raw).unwrap()).unwrap()
+        };
+        assert!(!board.apply(&signal("PostToolUse", "b", "fixture command B", "t1", 1), t0));
+        board.apply(&signal("UserPromptSubmit", "", "", "t1", 2), t0);
+        board.apply(&signal("PreToolUse", "a", "fixture command A", "t1", 3), t0);
+        board.apply(&signal("PreToolUse", "b", "fixture command B", "t1", 4), t0);
+        board.apply(&signal("PermissionRequest", "", "fixture command B", "t1", 5), t0);
+        assert!(!board.apply(&signal("PostToolUse", "a", "fixture command A", "t1", 9), t0));
+        assert!(!board.apply(&signal("PostToolUse", "b", "fixture command B", "previous", 10), t0));
+        assert_eq!(board.sessions[0].st, St::Wait);
+        assert!(board.apply(&signal("PostToolUse", "b", "fixture command B", "t1", 8), t0));
+        assert_eq!(board.sessions[0].st, St::Work);
+        assert!(!board.apply(&signal("PostToolUse", "b", "fixture command B", "t1", 11), t0));
+
+        // Two calls with identical inputs cannot be distinguished by a v0.171 approval.
+        for (call, t) in [("c", 12), ("d", 13)] {
+            board.apply(&signal("PreToolUse", call, "fixture command", "t1", t), t0);
+        }
+        board.apply(&signal("PermissionRequest", "", "fixture command", "t1", 14), t0);
+        assert!(!board.apply(&signal("PostToolUse", "c", "fixture command", "t1", 15), t0));
+        assert!(!board.apply(&signal("PostToolUse", "d", "fixture command", "t1", 16), t0));
+        assert_eq!(board.sessions[0].st, St::Wait);
+
+        assert!(!board.apply(&msg(Agent::Codex, "s1", Ev::LegacyDone), t0));
+        board.apply(&msg(Agent::Codex, "legacy", Ev::LegacyDone), t0);
+        assert_eq!(board.sessions[0].st, St::Wait);
+        assert_eq!(board.sessions[1].key, "codex-notify:legacy");
+        assert!(board.apply(&signal("Stop", "", "", "t1", 17), t0 + MIN_NOTICE_TIME));
+        assert_eq!(board.sessions[0].st, St::Done);
+        assert_eq!(board.completions.len(), 1);
+        assert!(!board.apply(&signal("PostToolUse", "d", "fixture command", "t1", 18), t0 + MIN_NOTICE_TIME));
+        assert!(!board.apply(&signal("UserPromptSubmit", "", "", "t1", 19), t0 + MIN_NOTICE_TIME));
     }
 
     #[test]

@@ -431,7 +431,7 @@ impl App {
             Ctl::Choice { .. } if self.compact.borrow().contains(&ri) => Hit::Menu(ri),
             Ctl::Choice { get, .. } => Hit::Choice(ri, get(&self.cfg)),
             Ctl::Menu { .. } => Hit::Menu(ri),
-            Ctl::Button { .. } => Hit::Button(ri),
+            Ctl::Button { .. } | Ctl::Navigate { .. } => Hit::Button(ri),
             Ctl::Shortcut { .. } => Hit::Shortcut(ri),
             Ctl::Fold { .. } => Hit::Fold(ri),
             Ctl::Header => return None,

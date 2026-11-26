@@ -27,10 +27,13 @@ pub enum Route {
     Complete(String),
     Snooze(String),
     News,
+    AgentWait(crate::agents::Wait),
+    AgentResult(crate::agents::Target),
     Scroll(isize),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
+    Agent,
     Morning,
     Wrap,
     Download,
@@ -47,7 +50,7 @@ impl Kind {
             Self::Download => glass::Mark::Download,
             Self::Reminder => glass::Mark::Note,
             Self::Battery => glass::Mark::Battery,
-            Self::Bundle | Self::News => glass::Mark::Inbox,
+            Self::Agent | Self::Bundle | Self::News => glass::Mark::Inbox,
         }
     }
 }
@@ -108,7 +111,7 @@ impl Card {
     }
 
     fn rows_top(&self) -> f32 {
-        TOP + self
+        (if self.title.is_empty() { 12. } else { TOP }) + self
             .emphasis
             .as_ref()
             .map_or(0., |e| if e.title.is_empty() { 48. } else { 72. })
@@ -165,7 +168,9 @@ unsafe fn paint_content(
     under: Option<&backdrop::Under>,
 ) -> Result<()> {
     let theme = glass::theme_for(theme, under);
-    glass::header_mark(dc, gfx, theme, card.kind.glyph(), &card.title, "", WIDTH)?;
+    if !card.title.is_empty() {
+        glass::header_mark(dc, gfx, theme, card.kind.glyph(), &card.title, "", WIDTH)?;
+    }
     if let Some(e) = &card.emphasis {
         glass::line(
             dc,
@@ -446,6 +451,30 @@ pub(super) fn interrupt_for_chat() -> Option<Interrupted> {
 pub(super) fn is_history() -> bool {
     VIEW.with(|v| v.try_borrow().ok().is_some_and(|v| v.as_ref().is_some_and(|v| v.card.kind == Kind::News)))
 }
+pub(super) fn resolve_waits(alive: impl Fn(&crate::agents::Wait) -> bool) {
+    VIEW.with(|v| {
+        let mut v = v.borrow_mut();
+        let Some(view) = v.as_mut() else { return };
+        let count = view.card.lines.len();
+        retain_waits(&mut view.card, &alive);
+        if view.card.lines.len() == count {
+            return;
+        }
+        if view.card.kind != Kind::News && view.card.lines.is_empty()
+            && view.card.emphasis.is_none() && view.card.buttons.is_empty()
+        {
+            v.take();
+        } else {
+            view.scroll = view.scroll.min(view.card.lines.len().saturating_sub(page_size(&view.card, view.rows)));
+            view.visible_card = viewport(&view.card, view.scroll, view.rows);
+            view.stamp = None;
+        }
+    });
+}
+
+pub(super) fn retain_waits(card: &mut Card, alive: impl Fn(&crate::agents::Wait) -> bool) {
+    card.lines.retain(|row| !matches!(&row.route, Route::AgentWait(wait) if !alive(wait)));
+}
 pub fn close() -> bool {
     VIEW.with(|v| v.borrow_mut().take().is_some())
 }
@@ -644,7 +673,7 @@ pub(super) fn anchor_at(anchor: Anchor, light: bool, motion: bool) -> bool {
 pub fn dispatch() {
     let routes = CLICKS.with(|q| std::mem::take(&mut *q.borrow_mut()));
     for route in routes {
-        if !matches!(route, Route::Scroll(_)) { dismiss(); }
+        if !matches!(route, Route::Scroll(_) | Route::AgentWait(_) | Route::AgentResult(_)) { dismiss(); }
         match route {
             Route::Agenda(at) => crate::topbar::companion_agenda(at),
             Route::Notes(id) | Route::BriefingNote { id, .. } => {
@@ -664,6 +693,14 @@ pub fn dispatch() {
             Route::Complete(id) => crate::notes::runtime::action(crate::notes::runtime::Action::Complete(id)),
             Route::Snooze(id) => crate::notes::runtime::action(crate::notes::runtime::Action::Snooze(id)),
             Route::News => super::news::open(),
+            Route::AgentWait(wait) => {
+                crate::agents::focus(&wait.target);
+                dismiss();
+            }
+            Route::AgentResult(target) => {
+                crate::agents::focus(&target);
+                dismiss();
+            }
             Route::Scroll(delta) => VIEW.with(|v| {
                 if let Some(view) = v.borrow_mut().as_mut() { scroll(view, delta); }
             }),

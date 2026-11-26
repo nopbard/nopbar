@@ -1,6 +1,7 @@
 //! `nopbar.exe --agent <claude|codex> [payload]`: what the agents' hooks
 //! run (connect.rs puts it there). Claude Code hands its hook a JSON
-//! object on stdin; Codex's notify adds one as the last argument.
+//! object on stdin. Codex lifecycle hooks do the same, and Codex's
+//! notify adds one as the last argument.
 //!
 //! It finds the session's processes (one snapshot: the agent itself, the
 //! first ancestor that is not a shell; the host, the first ancestor with a
@@ -34,8 +35,10 @@ const SHELLS: &[&str] = &["cmd.exe", "bash.exe", "sh.exe", "zsh.exe", "fish.exe"
 pub fn run(args: &[String]) -> i32 {
     if ignore_chat(std::env::var_os("NOPBAR_CHAT").as_deref()) {return 0;}
     let Some(agent) = args.get(2).and_then(|a| Agent::parse(a)) else { return 0 };
+    let t = now_filetime();
     let raw = match agent {
         Agent::Claude => read_stdin(),
+        Agent::Codex if args.get(3).is_some_and(|mode| mode == "--lifecycle") => read_stdin(),
         Agent::Codex => args.get(3..).and_then(|a| a.last()).cloned().unwrap_or_default(),
     };
     let payload: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
@@ -45,7 +48,7 @@ pub fn run(args: &[String]) -> i32 {
     let windows = top_windows();
     let found = find(&chain, &windows);
     let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
-    let line = line(agent, &payload, &found, &cwd, now_filetime());
+    let line = line(agent, &payload, &found, &cwd, t);
     send(&line);
     0
 }
@@ -105,6 +108,9 @@ pub fn line(agent: Agent, payload: &serde_json::Value, found: &Found, cwd_here: 
     let s = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
     let (event, session, cwd, ntype) = match agent {
         Agent::Claude => (s("hook_event_name"), s("session_id"), s("cwd"), s("notification_type")),
+        Agent::Codex if payload.get("hook_event_name").is_some() => (
+            s("hook_event_name"), s("session_id"), s("cwd"), String::new()
+        ),
         // Older Codex sends no thread id: one Codex process, one session.
         Agent::Codex => {
             let t = s("thread-id");
@@ -113,6 +119,7 @@ pub fn line(agent: Agent, payload: &serde_json::Value, found: &Found, cwd_here: 
     };
     let cwd = if cwd.is_empty() { cwd_here.to_string() } else { cwd };
     let (host_pid, hwnd) = found.host.unwrap_or((0, 0));
+    let codex_hook = agent == Agent::Codex && payload.get("hook_event_name").is_some();
     serde_json::json!({
         "type": "Agent",
         "agent": agent.id(),
@@ -124,8 +131,31 @@ pub fn line(agent: Agent, payload: &serde_json::Value, found: &Found, cwd_here: 
         "host_pid": host_pid,
         "hwnd": hwnd as i64,
         "t": t,
+        "turn": codex_hook.then(|| s("turn_id")),
+        "tool_call": codex_hook.then(|| s("tool_use_id")),
+        "tool_key": if codex_hook && matches!(event.as_str(), "PreToolUse" | "PermissionRequest") {
+            tool_key(payload)
+        } else {
+            None
+        },
     })
     .to_string()
+}
+
+/// Codex 0.171 includes the invocation ID in PreToolUse and PostToolUse.
+/// PermissionRequest only identifies its tool and input. Hash the matching
+/// fields here so the command or other tool input never crosses the pipe.
+fn tool_key(payload: &serde_json::Value) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let name = payload.get("tool_name")?.as_str()?;
+    let input = payload.get("tool_input")?;
+    let mut normalized = match name {
+        "Bash" | "apply_patch" => input.get("command")?.clone(),
+        _ => input.clone(),
+    };
+    normalized.sort_all_objects();
+    let data = serde_json::to_vec(&(name, normalized)).ok()?;
+    Some(format!("{:x}", Sha256::digest(data)))
 }
 
 /// One line to the running dock's pipe; nothing if none runs or it is
@@ -200,7 +230,7 @@ fn app_window(h: HWND) -> bool {
 
 /// Each process's frontmost app window (pid -> window; Z order: the one
 /// used last comes first).
-fn top_windows() -> HashMap<u32, isize> {
+pub(super) fn top_windows() -> HashMap<u32, isize> {
     unsafe extern "system" fn each(h: HWND, lp: LPARAM) -> windows::core::BOOL {
         let map = &mut *(lp.0 as *mut HashMap<u32, isize>);
         if app_window(h) {
@@ -239,6 +269,27 @@ pub(super) fn exe_path(pid: u32) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn codex_stop_uses_the_hook_session_and_discards_input_details() {
+        use crate::agents::{Ev, Msg, St};
+        let found = Found { agent_pid: 11, host: None };
+        let payload = serde_json::json!({
+            "hook_event_name": "PermissionRequest",
+            "session_id": "fixture-thread",
+            "cwd": "C:/fixture/project",
+            "tool_input": {"command": "fixture instruction"},
+        });
+        let hook = line(Agent::Codex, &payload, &found, "", 1);
+        assert!(!hook.contains("fixture instruction"));
+        let hook = Msg::parse(&serde_json::from_str(&hook).unwrap()).unwrap();
+        let stop = serde_json::json!({
+            "hook_event_name": "Stop", "session_id": "fixture-thread"
+        });
+        let done = Msg::parse(&serde_json::from_str(&line(Agent::Codex, &stop, &found, "", 2)).unwrap()).unwrap();
+        assert_eq!(hook.session, done.session);
+        assert_eq!(hook.ev, Ev::To(St::Wait));
+        assert_eq!(done.ev, Ev::To(St::Done));
+    }
     fn chain(v: &[(u32, &str)]) -> Vec<(u32, String)> {
         v.iter().map(|(p, n)| (*p, n.to_string())).collect()
     }
@@ -292,7 +343,7 @@ mod tests {
         // Codex's notify, with and without a thread id.
         let codex = serde_json::json!({"type":"agent-turn-complete","thread-id":"t1","cwd":"D:\\sample-project","last-assistant-message":"x"});
         let m = super::super::Msg::parse(&serde_json::from_str(&line(Agent::Codex, &codex, &found, "", 0)).unwrap()).unwrap();
-        assert_eq!((m.session.as_str(), m.ev), ("t1", super::super::Ev::To(super::super::St::Done)));
+        assert_eq!((m.session.as_str(), m.ev), ("t1", super::super::Ev::LegacyDone));
         let old = serde_json::json!({"type":"agent-turn-complete"});
         let m = super::super::Msg::parse(&serde_json::from_str(&line(Agent::Codex, &old, &found, "C:\\here\\x", 0)).unwrap()).unwrap();
         assert_eq!((m.session.as_str(), m.cwd.as_str()), ("pid4", "C:\\here\\x"));

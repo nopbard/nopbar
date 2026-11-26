@@ -1022,7 +1022,7 @@ pub(crate) fn xml_escape(s: &str) -> String {
 }
 
 /// At most `max` characters, cut at a character boundary with "…".
-fn clip(s: &str, max: usize) -> String {
+pub(crate) fn clip(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
@@ -1080,13 +1080,17 @@ pub(crate) fn register_aumid() -> Result<(), String> {
     }
 }
 
-/// Removes the AppUserModelID and the install scheme (uninstall).
+/// Removes the AppUserModelID and NopBar's notification protocols (uninstall).
 pub fn unregister_aumid() {
     use windows::core::HSTRING;
     use windows::Win32::System::Registry::{RegDeleteTreeW, HKEY_CURRENT_USER};
     unsafe {
         let _ = RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(AUMID_KEY));
         let _ = RegDeleteTreeW(HKEY_CURRENT_USER, &HSTRING::from(SCHEME_KEY));
+        for scheme in [crate::companion::agent_toast::SCHEME, crate::notes::toast::SCHEME] {
+            let key = HSTRING::from(format!("Software\\Classes\\{scheme}"));
+            let _ = RegDeleteTreeW(HKEY_CURRENT_USER, &key);
+        }
     }
 }
 
@@ -1120,6 +1124,10 @@ pub fn try_notice_now(title: &str, body: &str) -> bool {
 }
 
 pub(crate) fn show_xml(xml: &str) -> Result<(), String> {
+    show_grouped_xml(xml, None)
+}
+
+pub(crate) fn show_grouped_xml(xml: &str, group: Option<(&str, &str)>) -> Result<(), String> {
     use windows::core::HSTRING;
     use windows::Data::Xml::Dom::XmlDocument;
     use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
@@ -1127,6 +1135,10 @@ pub(crate) fn show_xml(xml: &str) -> Result<(), String> {
         let doc = XmlDocument::new()?;
         doc.LoadXml(&HSTRING::from(xml))?;
         let toast = ToastNotification::CreateToastNotification(&doc)?;
+        if let Some((tag, group)) = group {
+            toast.SetTag(&HSTRING::from(tag))?;
+            toast.SetGroup(&HSTRING::from(group))?;
+        }
         ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(AUMID))?.Show(&toast)
     };
     show().map_err(|e| format!("toast: {e}"))

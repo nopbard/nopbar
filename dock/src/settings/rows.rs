@@ -829,6 +829,7 @@ impl App {
                 Ctl::Menu { opts, .. } if swatches => cr - swatches_w(opts.len()) - 4.0,
                 Ctl::Menu { .. } => cr - tok::FIELD_W,
                 Ctl::Button { text: label } => cr - measure(t(label), tok::BODY) - 32.0,
+                Ctl::Navigate { value, .. } => cr - measure(value(&self.cfg), tok::BODY) - 28.0,
                 Ctl::Shortcut { .. } => cr - tok::FIELD_W,
                 Ctl::Header | Ctl::Fold { .. } => cr,
             };
@@ -869,6 +870,9 @@ impl App {
             }
             tops.push((card.top, card.bottom));
             self.card_segment(dc, card, card_r, first, last)?;
+            if matches!(row.ctl, Ctl::Navigate { .. }) && self.hover == Some(Hit::Button(ri)) {
+                self.fill_segment(dc, self.row_fill(self.state_of(Hit::Button(ri))), m.r(card), card_r, first, last)?;
+            }
             if !first {
                 self.hairline(dc, m, left + pad, right - tok::ROW_PAD, y)?;
             }
@@ -1055,6 +1059,16 @@ impl App {
                     self.note(Kind::Ctl { kind: CtlKind::Button, cy }, row.key, m.r(r));
                     self.button(dc, m.r(r), label, self.hover == Some(Hit::Button(ri)))?;
                     hit(r, Hit::Button(ri), hits);
+                }
+                Ctl::Navigate { value, .. } => {
+                    let label = value(&self.cfg);
+                    let tw = measure(label, tok::BODY) + 1.0;
+                    let x = cr - tw - 24.0;
+                    self.text_box(dc, label, m.span(x, tw), self.text_top(cy, tok::BODY), tok::BODY, false, tw, self.dim(), rtl)?;
+                    let arrow = if rtl { Glyph::ChevronLeft } else { Glyph::ChevronRight };
+                    self.glyph(dc, arrow, 16.0, m.x(cr - 8.0), cy, self.dim())?;
+                    self.note(Kind::Ctl { kind: CtlKind::Button, cy }, row.key, m.r(rect(x, cy - ch / 2.0, cr, cy + ch / 2.0)));
+                    hit(card, Hit::Button(ri), hits);
                 }
                 Ctl::Choice { opts, get, .. } if !compact => {
                     let cur = get(&self.cfg);

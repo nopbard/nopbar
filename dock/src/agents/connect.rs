@@ -7,10 +7,9 @@
 //!   CLAUDE_CONFIG_DIR) and each of Orca's profiles (Orca starts Claude
 //!   with CLAUDE_CONFIG_DIR set to `%APPDATA%\orca\claude-profiles\<id>\home`,
 //!   whose settings.json is a copy of its own, not a link).
-//! - Codex: its `notify` program (the only state Codex tells one; its own
-//!   hooks need each command trusted in Codex first). Codex takes one
-//!   notify program: one that is someone else's is left as it is and the
-//!   connect fails.
+//! - Codex: user hooks for work, permission requests and completed turns,
+//!   plus legacy `notify` registration. Codex requires the user's trust
+//!   for each hook. A notify program owned by someone else is preserved.
 //!
 //! Ours is recognized by `--agent <agent>` after an exe named nopbar.exe;
 //! a connect replaces ours (this exe may have moved with an update) and
@@ -21,10 +20,13 @@
 
 use std::path::{Path, PathBuf};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 use super::Agent;
 
 /// The Claude Code events NopBar listens to (agents::event_of).
 pub const CLAUDE_EVENTS: [&str; 6] = ["UserPromptSubmit", "PostToolUse", "Notification", "Stop", "StopFailure", "SessionEnd"];
+const CODEX_EVENTS: [&str; 7] = ["UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop", "Interrupt", "SessionEnd"];
 /// A hook's limit in Claude (seconds; ours ends in a fraction of one).
 const HOOK_TIMEOUT: u64 = 5;
 
@@ -77,9 +79,8 @@ pub fn connect(agent: Agent, p: &Places) -> Result<usize, String> {
         Agent::Claude => each_claude(p, true, &Scope::All),
         Agent::Codex => {
             let f = p.codex.as_ref().ok_or("Codex is not set up on this PC")?;
-            let text = read_or_empty(f)?;
-            let out = codex_connect(&text, &p.exe)?;
-            write_if_changed(f, &text, &out)
+            let written = edit_codex_notify(f, Some(&p.exe), &Scope::All)?;
+            Ok(written + change_codex_hooks(f, Some(&p.exe)))
         }
     }
 }
@@ -119,7 +120,7 @@ fn exe_of(command: &str) -> Option<&str> {
     rest.find(q).map(|j| &rest[..j])
 }
 
-fn same_path(a: &str, b: &str) -> bool {
+pub(super) fn same_path(a: &str, b: &str) -> bool {
     let n = |p: &str| p.replace('/', "\\").to_ascii_lowercase();
     n(a) == n(b)
 }
@@ -139,6 +140,8 @@ fn dropped(command: &str, agent: Agent, scope: &Scope) -> bool {
 /// runs a NopBar that is there (this one, or another copy: the installed
 /// one while a dev build starts) is left as it is; one with no entry of
 /// ours, or only ones whose exe is gone, is connected to this exe.
+/// Codex startup repairs notify only. Lifecycle hooks require explicit
+/// connection because changing a hook requires the user's trust again.
 pub fn ensure(agent: Agent, p: &Places) -> Result<usize, String> {
     let live = |line: &str| is_ours(line, agent) && exe_of(line).is_some_and(|e| Path::new(e).is_file());
     match agent {
@@ -159,10 +162,13 @@ pub fn ensure(agent: Agent, p: &Places) -> Result<usize, String> {
             let text = read_or_empty(f)?;
             let (_, body) = split_bom(&text);
             let lines: Vec<&str> = body.lines().collect();
-            if notify_at(&lines).is_some_and(|i| live(lines[i])) {
+            if notify_at(&lines).is_some_and(|i| {
+                live(lines[i]) && exe_of(lines[i]).is_some_and(|exe| !same_path(exe, &p.exe))
+            }) {
                 return Ok(0);
             }
-            connect(agent, p)
+            let out = codex_connect(&text, &p.exe)?;
+            write_if_changed(f, &text, &out)
         }
     }
 }
@@ -194,16 +200,17 @@ fn split_bom(text: &str) -> (&str, &str) {
 
 /// Disconnects `agent`: only NopBar's entries go (those `scope` names).
 pub fn disconnect(agent: Agent, p: &Places) -> Result<usize, String> {
-    disconnect_in(agent, p, &Scope::All)
+    let written = disconnect_in(agent, p, &Scope::All)?;
+    let hooks = p.codex.as_deref().filter(|_| agent == Agent::Codex);
+    Ok(written + hooks.map_or(0, |f| change_codex_hooks(f, None)))
 }
 
 fn disconnect_in(agent: Agent, p: &Places, scope: &Scope) -> Result<usize, String> {
     match agent {
         Agent::Claude => each_claude(p, false, scope),
         Agent::Codex => {
-            let Some(f) = p.codex.as_ref().filter(|f| f.is_file()) else { return Ok(0) };
-            let text = std::fs::read_to_string(f).map_err(|e| e.to_string())?;
-            write_if_changed(f, &text, &codex_disconnect_in(&text, scope))
+            let Some(f) = p.codex.as_deref() else { return Ok(0) };
+            edit_codex_notify(f, None, scope)
         }
     }
 }
@@ -219,6 +226,12 @@ pub fn remove_on_uninstall(p: &Places) -> (usize, Vec<String>) {
         match disconnect_in(agent, p, &scope) {
             Ok(k) => n += k,
             Err(e) => failed.push(format!("{} hooks: {e}", agent.id())),
+        }
+    }
+    if let Some(config) = &p.codex {
+        match edit_codex_lifecycle(config, None, &scope) {
+            Ok(k) => n += k,
+            Err(e) => failed.push(format!("Codex lifecycle hooks: {e}")),
         }
     }
     (n, failed)
@@ -430,10 +443,16 @@ fn print_settings(n: &Node, crlf: bool) -> String {
 
 /// A hook group (`{"matcher":..., "hooks":[...]}`) with only NopBar's
 /// commands left out; None if nothing of it is left.
-fn without_ours(group: &Node, scope: &Scope) -> Option<Node> {
+fn without_ours(group: &Node, agent: Agent, scope: &Scope) -> Option<Node> {
     let Node::Obj(fields) = group else { return Some(group.clone()) };
     let Some(Node::Arr(hooks)) = group.get("hooks") else { return Some(group.clone()) };
-    let kept: Vec<Node> = hooks.iter().filter(|h| !hook_line(h).is_some_and(|c| dropped(&c, Agent::Claude, scope))).cloned().collect();
+    let kept: Vec<Node> = hooks.iter().filter(|h| !hook_line(h).is_some_and(|c| match agent {
+        Agent::Claude => dropped(&c, agent, scope),
+        Agent::Codex => codex_hook_exe(&c).is_some_and(|exe| match scope {
+            Scope::All => true,
+            Scope::Leftover(ours) => same_path(&exe, ours) || !Path::new(&exe).is_file(),
+        }),
+    })).cloned().collect();
     if kept.len() == hooks.len() {
         return Some(group.clone());
     }
@@ -457,7 +476,7 @@ fn hook_line(h: &Node) -> Option<String> {
 /// Git Bash or PowerShell started for it) run in the background
 /// (`async`: Claude never waits for it, its output and exit code are not
 /// Claude's business). Both checked on Claude Code 2.1.322.
-fn our_group(event: &str, exe: &str) -> Node {
+fn claude_group(event: &str, exe: &str) -> Node {
     let hook = Node::Obj(vec![
         ("type".into(), Node::Val("command".into())),
         ("command".into(), Node::Val(exe.replace('\\', "/").into())),
@@ -476,7 +495,7 @@ fn our_group(event: &str, exe: &str) -> Node {
 /// Pure: settings.json's text with NopBar's hooks `on` (ours appended
 /// after the others in each event, once) or off; everything else as it
 /// was, in its order.
-fn claude_edit(text: &str, exe: Option<&str>, scope: &Scope) -> Result<String, String> {
+fn edit_hooks(text: &str, agent: Agent, exe: Option<&str>, scope: &Scope) -> Result<String, String> {
     let mut root = parse_settings(text)?;
     let Node::Obj(fields) = &mut root else { unreachable!() };
     let at = match fields.iter().position(|(k, _)| k == "hooks") {
@@ -488,12 +507,24 @@ fn claude_edit(text: &str, exe: Option<&str>, scope: &Scope) -> Result<String, S
         }
     };
     let Node::Obj(events) = &mut fields[at].1 else { return Err("\"hooks\" is not an object".into()) };
-    // Ours out of every event first (a connect puts them back fresh).
+    // Codex trusts handlers by their group and handler indices.
+    if let (Agent::Codex, Some(exe)) = (agent, exe) {
+        for &event in &CODEX_EVENTS {
+            let group = codex_group(event, exe);
+            match events.iter_mut().find(|(name, _)| name == event) {
+                Some((_, Node::Arr(groups))) => upsert_codex_group(groups, group),
+                Some(_) => return Err(format!("\"hooks.{event}\" is not a list")),
+                None => events.push((event.into(), Node::Arr(vec![group]))),
+            }
+        }
+        return Ok(updated_settings(text, &root));
+    }
+    // Claude connects afresh. Disconnects take out our handlers.
     let mut emptied = Vec::new();
     for (name, groups) in events.iter_mut() {
         if let Node::Arr(gs) = groups {
             let before = gs.len();
-            let kept: Vec<Node> = gs.iter().filter_map(|g| without_ours(g, scope)).collect();
+            let kept: Vec<Node> = gs.iter().filter_map(|g| without_ours(g, agent, scope)).collect();
             if kept.is_empty() && before > 0 {
                 emptied.push(name.clone());
             }
@@ -502,10 +533,11 @@ fn claude_edit(text: &str, exe: Option<&str>, scope: &Scope) -> Result<String, S
     }
     if let Some(exe) = exe {
         for ev in CLAUDE_EVENTS {
+            let group = claude_group(ev, exe);
             match events.iter_mut().find(|(k, _)| k == ev) {
-                Some((_, Node::Arr(gs))) => gs.push(our_group(ev, exe)),
+                Some((_, Node::Arr(gs))) => gs.push(group),
                 Some(_) => return Err(format!("\"hooks.{ev}\" is not a list")),
-                None => events.push((ev.to_string(), Node::Arr(vec![our_group(ev, exe)]))),
+                None => events.push((ev.to_string(), Node::Arr(vec![group]))),
             }
         }
     } else {
@@ -515,12 +547,18 @@ fn claude_edit(text: &str, exe: Option<&str>, scope: &Scope) -> Result<String, S
             fields.remove(at);
         }
     }
-    let out = print_settings(&root, text.contains("\r\n"));
-    // Nothing of ours changed: the file stays byte for byte.
-    if parse_settings(&out).ok() == parse_settings(text).ok() {
-        return Ok(text.to_string());
+    Ok(updated_settings(text, &root))
+}
+
+fn updated_settings(text: &str, root: &Node) -> String {
+    if parse_settings(text).is_ok_and(|previous| previous == *root) {
+        return text.to_string();
     }
-    Ok(out)
+    print_settings(root, text.contains("\r\n"))
+}
+
+fn claude_edit(text: &str, exe: Option<&str>, scope: &Scope) -> Result<String, String> {
+    edit_hooks(text, Agent::Claude, exe, scope)
 }
 
 pub fn claude_connect(text: &str, exe: &str) -> Result<String, String> {
@@ -533,6 +571,131 @@ pub fn claude_disconnect(text: &str) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------- Codex
+
+const CODEX_COMMAND: &str = "powershell.exe -NoProfile -NonInteractive -EncodedCommand ";
+const CODEX_SCRIPT: &str = "$ProgressPreference = 'SilentlyContinue'; [Console]::InputEncoding = $OutputEncoding = [Text.UTF8Encoding]::new($false); [Console]::In.ReadToEnd() | & '";
+const CODEX_ARGS: &str = "' --agent codex --lifecycle";
+
+fn codex_group(event: &str, exe: &str) -> Node {
+    // An explicit interpreter works under both of Codex's Windows shells.
+    // Encoding keeps the install path and the stdin relay out of the outer shell.
+    let script = format!("{CODEX_SCRIPT}{}{CODEX_ARGS}", exe.replace('\'', "''"));
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let command = format!("{CODEX_COMMAND}{}", STANDARD.encode(bytes));
+    Node::Obj(vec![("hooks".into(), Node::Arr(vec![Node::Obj(vec![
+        ("type".into(), Node::Val("command".into())),
+        ("command".into(), Node::Val(command.into())),
+        ("async".into(), Node::Val(matches!(event, "UserPromptSubmit" | "PostToolUse" | "Interrupt").into())),
+        ("timeout".into(), Node::Val(3.into())),
+    ])]))])
+}
+
+fn upsert_codex_group(groups: &mut Vec<Node>, group: Node) {
+    let Some(Node::Arr(new_hooks)) = group.get("hooks") else { unreachable!() };
+    let replacement = &new_hooks[0];
+    let Node::Obj(replacement_fields) = replacement else { unreachable!() };
+    let mut found = false;
+    for existing in groups.iter_mut() {
+        let Node::Obj(fields) = existing else { continue };
+        let Some((_, Node::Arr(hooks))) = fields.iter_mut().find(|(key, _)| key == "hooks") else { continue };
+        for hook in hooks {
+            if hook_line(hook).is_some_and(|line| codex_hook_exe(&line).is_some()) {
+                let same = matches!(hook, Node::Obj(fields) if fields.len() == replacement_fields.len())
+                    && replacement_fields.iter().all(|(key, value)| hook.get(key) == Some(value));
+                if !same {
+                    *hook = replacement.clone();
+                }
+                found = true;
+            }
+        }
+    }
+    if !found {
+        groups.push(group);
+    }
+}
+
+fn codex_hook_exe(line: &str) -> Option<String> {
+    let script;
+    let escaped = if let Some(encoded) = line.strip_prefix(CODEX_COMMAND) {
+        let bytes = STANDARD.decode(encoded).ok()?;
+        let (units, remainder) = bytes.as_chunks::<2>();
+        if !remainder.is_empty() {
+            return None;
+        }
+        let utf16: Vec<u16> = units.iter().copied().map(u16::from_le_bytes).collect();
+        script = String::from_utf16(&utf16).ok()?;
+        script.strip_prefix(CODEX_SCRIPT)?
+    } else {
+        // A reconnect or uninstall still recognizes the original hook.
+        line.strip_prefix("& '")?
+    };
+    let path = escaped.strip_suffix(CODEX_ARGS)?.replace("''", "'");
+    Path::new(&path).file_name()?.eq_ignore_ascii_case("nopbar.exe").then_some(path)
+}
+
+fn edit_codex_notify(config: &Path, exe: Option<&str>, scope: &Scope) -> Result<usize, String> {
+    let before = read_or_empty(config)?;
+    let after = match exe {
+        Some(exe) => codex_connect(&before, exe)?,
+        None => codex_disconnect_in(&before, scope),
+    };
+    write_if_changed(config, &before, &after)
+}
+
+fn edit_codex_lifecycle(config: &Path, exe: Option<&str>, scope: &Scope) -> Result<usize, String> {
+    let hooks = config.with_file_name("hooks.json");
+    let before = read_or_empty(&hooks)?;
+    let after = edit_hooks(&before, Agent::Codex, exe, scope)?;
+    write_if_changed(&hooks, &before, &after)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CodexHookStatus {
+    Ready,
+    Reconnect,
+    Failed,
+}
+
+#[cfg(not(test))]
+static CODEX_HOOK_STATUS: std::sync::Mutex<Option<(std::time::Instant, CodexHookStatus)>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(not(test))]
+pub(crate) fn codex_hook_status() -> CodexHookStatus {
+    use std::time::{Duration, Instant};
+    let mut cached = CODEX_HOOK_STATUS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, status)) = *cached {
+        if at.elapsed() < Duration::from_secs(15) {
+            return status;
+        }
+    }
+    let places = Places::of_this_pc();
+    let status = places.codex.as_deref().map_or(CodexHookStatus::Reconnect, |config| {
+        read_or_empty(&config.with_file_name("hooks.json")).and_then(|before| {
+            edit_hooks(&before, Agent::Codex, Some(&places.exe), &Scope::All)
+                .map(|after| if before == after { CodexHookStatus::Ready } else { CodexHookStatus::Reconnect })
+        }).unwrap_or(CodexHookStatus::Failed)
+    });
+    *cached = Some((Instant::now(), status));
+    status
+}
+
+fn change_codex_hooks(config: &Path, exe: Option<&str>) -> usize {
+    let result = edit_codex_lifecycle(config, exe, &Scope::All);
+    #[cfg(not(test))]
+    {
+        let status = match (&result, exe) {
+            (Ok(_), Some(_)) => CodexHookStatus::Ready,
+            (Ok(_), None) => CodexHookStatus::Reconnect,
+            (Err(_), _) => CodexHookStatus::Failed,
+        };
+        *CODEX_HOOK_STATUS.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), status));
+    }
+    result.unwrap_or_else(|error| {
+        crate::log!("agents: Codex lifecycle hooks failed: {error}");
+        0
+    })
+}
 
 /// Pure: NopBar's notify line (TOML literal strings: no escapes).
 pub fn codex_line(exe: &str) -> String {
@@ -649,6 +812,87 @@ mod tests {
     }
 
     const EXE: &str = r"C:\Users\me\AppData\Local\Programs\NopBar\nopbar.exe";
+
+    #[test]
+    fn codex_lifecycle_keeps_other_hooks_and_replaces_only_ours() {
+        let other = r#"{"hooks":{"PermissionRequest":[{"hooks":[{"type":"command","command":"example.exe"}]}]}}"#;
+        let existing = parse_settings(other).unwrap();
+        let with_ours = edit_hooks(other, Agent::Codex, Some(EXE), &Scope::All).unwrap();
+        let commands = hook_lines(&parse_settings(&with_ours).unwrap());
+        assert_eq!(commands.first().map(String::as_str), Some("example.exe"));
+        assert_eq!(commands.iter().filter(|c| codex_hook_exe(c).as_deref() == Some(EXE)).count(), CODEX_EVENTS.len());
+        assert_eq!(edit_hooks(&with_ours, Agent::Codex, Some(EXE), &Scope::All).unwrap(), with_ours);
+        let removed = edit_hooks(&with_ours, Agent::Codex, None, &Scope::All).unwrap();
+        assert_eq!(parse_settings(&removed).unwrap(), existing);
+    }
+
+    #[test]
+    fn codex_reconnect_keeps_the_group_and_handler_indices() {
+        let before = serde_json::json!({
+            "hooks": {
+                "PermissionRequest": [
+                    {"hooks": [{"type": "command", "command": "before.exe"}]},
+                    {"matcher": "Bash", "hooks": [
+                        {"type": "command", "command": "first.exe", "async": true},
+                        {"type": "command", "command": r"& 'C:\old\nopbar.exe' --agent codex --lifecycle"},
+                        {"type": "command", "command": "last.exe", "timeout": 22}
+                    ]},
+                    {"matcher": "Edit", "hooks": [{"type": "command", "command": "after.exe"}]}
+                ]
+            }
+        });
+        let exe = r"C:\Fixture's folder & %sample%\nopbar.exe";
+        let out = edit_hooks(&before.to_string(), Agent::Codex, Some(exe), &Scope::All).unwrap();
+        let mut after: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let updated = &mut after["hooks"]["PermissionRequest"];
+        assert_eq!(codex_hook_exe(updated[1]["hooks"][1]["command"].as_str().unwrap()).as_deref(), Some(exe));
+        updated[1]["hooks"][1] = before["hooks"]["PermissionRequest"][1]["hooks"][1].clone();
+        assert_eq!(*updated, before["hooks"]["PermissionRequest"]);
+        let compact = serde_json::from_str::<serde_json::Value>(&out).unwrap().to_string();
+        assert_eq!(edit_hooks(&compact, Agent::Codex, Some(exe), &Scope::All).unwrap(), compact);
+        let hooks: serde_json::Value = serde_json::from_str(&out).unwrap();
+        for event in CODEX_EVENTS {
+            let hook = if event == "PermissionRequest" {
+                &hooks["hooks"][event][1]["hooks"][1]
+            } else {
+                &hooks["hooks"][event][0]["hooks"][0]
+            };
+            assert_eq!(hook["async"], matches!(event, "UserPromptSubmit" | "PostToolUse" | "Interrupt"), "{event}");
+        }
+    }
+
+    #[test]
+    fn codex_startup_preserves_lifecycle_files_and_explicit_connect_is_partial() {
+        let dir = std::env::temp_dir().join(format!("nopbar-codex-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let config = dir.join("config.toml");
+        let hooks = dir.join("hooks.json");
+        let places = Places { claude: vec![], claude_make: None, codex: Some(config.clone()), exe: EXE.into() };
+        let bubbles = |on: bool| {
+            assert!(on);
+            let text = std::fs::read_to_string(&config).unwrap();
+            assert!(text.contains("--agent"));
+            std::fs::write(&config, crate::companion::chat::connect::codex(&text, EXE, true)?)
+                .map_err(|e| e.to_string())
+        };
+        notifications(Agent::Codex, &places, super::super::Job::Ensure, bubbles).unwrap();
+        assert!(!hooks.exists());
+        let old = br#" {"hooks":{"PermissionRequest":[{"hooks":[{"type":"command","command":"example.exe"}]}]}}"#;
+        std::fs::write(&hooks, old).unwrap();
+        notifications(Agent::Codex, &places, super::super::Job::Ensure, bubbles).unwrap();
+        assert_eq!(std::fs::read(&hooks).unwrap(), old);
+        assert!(!dir.join("hooks.json.nopbar.bak").exists());
+        std::fs::write(&hooks, [0xff]).unwrap();
+        std::fs::write(&config, TOML).unwrap();
+        notifications(Agent::Codex, &places, super::super::Job::Connect, bubbles).unwrap();
+        assert_eq!(std::fs::read(&hooks).unwrap(), [0xff]);
+        assert!(std::fs::read_to_string(&config).unwrap().contains("nopbar-companion"));
+        std::fs::write(&hooks, old).unwrap();
+        assert_eq!(connect(Agent::Codex, &places), Ok(1));
+        assert_eq!(connect(Agent::Codex, &places), Ok(0));
+        assert_eq!(std::fs::read(dir.join("hooks.json.nopbar.bak")).unwrap(), old);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     /// Orca's hooks and the user's own, as Claude writes the file.
     const SETTINGS: &str = r#"{
@@ -854,9 +1098,10 @@ mod tests {
         assert_eq!(connect(Agent::Claude, &p), Ok(2));
         assert_eq!(connect(Agent::Claude, &p), Ok(0), "already");
         assert_eq!(std::fs::read_to_string(profile.join("settings.json.nopbar.bak")).unwrap(), SETTINGS);
-        assert_eq!(connect(Agent::Codex, &p), Ok(1));
+        assert_eq!(connect(Agent::Codex, &p), Ok(2));
+        assert_eq!(ensure(Agent::Codex, &p), Ok(0));
         assert_eq!(disconnect(Agent::Claude, &p), Ok(2));
-        assert_eq!(disconnect(Agent::Codex, &p), Ok(1));
+        assert_eq!(disconnect(Agent::Codex, &p), Ok(2));
         assert_eq!(std::fs::read_to_string(profile.join("settings.json")).unwrap(), SETTINGS);
         assert_eq!(std::fs::read_to_string(dir.join(".codex").join("config.toml")).unwrap(), TOML);
         assert!(!profile.join("settings.json.nopbar.tmp").exists());

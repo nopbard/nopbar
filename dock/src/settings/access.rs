@@ -215,8 +215,11 @@ impl App {
             }
             Hit::NewNote(ri) => Node::new(key, Role::Button, t("notes.new"), rect).invoke().help(self.row_help(ri)),
             Hit::Button(ri) => {
-                let Some(Ctl::Button { text }) = rows.get(ri).map(|r| &r.ctl) else { return None };
-                Node::new(key, Role::Button, t(text), rect).invoke().help(sentences(&[&label(ri)?, &self.row_help(ri)]))
+                match &rows.get(ri)?.ctl {
+                    Ctl::Button { text } => Node::new(key, Role::Button, t(text), rect).invoke().help(sentences(&[&label(ri)?, &self.row_help(ri)])),
+                    Ctl::Navigate { value, .. } => Node::new(key, Role::Button, label(ri)?, rect).invoke().value(value(&self.cfg)),
+                    _ => return None,
+                }
             }
             Hit::Fold(ri) => Node::new(key, Role::Button, label(ri)?, rect).expand(self.fold_open(rows, ri)),
             Hit::Shortcut(ri) => {

@@ -24,6 +24,8 @@ pub(crate) mod routine;
 mod card;
 mod card_input;
 mod news;
+mod agent_news;
+pub(crate) mod agent_toast;
 mod living;
 mod pacer;
 pub mod peek;
@@ -378,39 +380,25 @@ pub fn visible() -> bool {
     })
 }
 pub fn attention() -> bool {
-    APP.with(|a| a.try_borrow().ok().is_some_and(|a| a.as_ref().is_some_and(|a| a.attention(Instant::now()))))
-}
-impl App {
-    fn attention(&self, now: Instant) -> bool {
-        self.cfg.enabled && slot_attention(&self.model.signal, news::unread() != 0, now)
-    }
-}
-fn slot_attention(signal: &model::Signal, unread: bool, now: Instant) -> bool {
-    !signal.waits.is_empty()
-        || signal.result.is_some_and(|(at, _)| now.saturating_duration_since(at).as_secs_f32() < 4.)
-        || unread
+    APP.with(|a| a.try_borrow().ok().is_some_and(|a| a.as_ref().is_some_and(App::attention)))
 }
 
-/// Agent results expire after four seconds. Waits refresh when they change.
-fn slot_wake(signal: &model::Signal, now: Instant) -> Option<u32> {
-    let result = signal.result.map(|(at, _)| at + std::time::Duration::from_secs(4));
-    result.filter(|t| *t > now).map(|t| (t.saturating_duration_since(now).as_millis() as u32).saturating_add(20).clamp(50, 60_000))
+impl App {
+    fn attention(&self) -> bool {
+        slot_attention(self.cfg.enabled, news::unread())
+    }
+}
+
+fn slot_attention(enabled: bool, unread: usize) -> bool {
+    enabled && unread != 0
 }
 
 #[cfg(test)]
 #[test]
-fn home_notice_preserves_agent_signals_and_unread_news() {
-    use std::time::Duration;
-    let now = Instant::now();
-    let mut signal = model::Signal::default();
-    assert!(!slot_attention(&signal, false, now));
-    signal.waits.push(("agent".into(), now));
-    assert!(slot_attention(&signal, false, now));
-    signal.waits.clear();
-    signal.result = Some((now, false));
-    assert!(slot_attention(&signal, false, now + Duration::from_secs(3)));
-    assert!(!slot_attention(&signal, false, now + Duration::from_secs(4)));
-    assert!(slot_attention(&signal, true, now + Duration::from_secs(4)));
+fn home_notice_tracks_unread_news_only() {
+    assert!(!slot_attention(true, 0));
+    assert!(slot_attention(true, 1));
+    assert!(!slot_attention(false, 1));
 }
 pub fn monitor() -> Option<RECT> {
     APP.with(|a| {
@@ -482,9 +470,11 @@ fn handle_once() {
     convenience::wake_due();
     convenience::drain();
     card::dispatch();
+    agent_toast::dispatch();
     remind::poll();
     let refreshed = PENDING.swap(false, Ordering::SeqCst);
     let now = Instant::now();
+    let agent_news_next = agent_news::poll(now);
     let signal = if quiet { model::Signal::default() } else { crate::agents::companion_signal(now) };
     let inputs=std::mem::take(&mut *INPUT.lock().unwrap_or_else(|e|e.into_inner()));
     let queued=cues::take_ready(&mut CUES.lock().unwrap_or_else(|e|e.into_inner()), quiet);
@@ -543,10 +533,9 @@ fn handle_once() {
         let Some(a) = a.as_mut() else { return false; };
         let before = (a.slot_shown, a.slot_attention);
         a.slot_shown = a.cfg.enabled && a.shown;
-        a.slot_attention = a.attention(now);
-        let result = if a.cfg.enabled && !a.shown { slot_wake(&a.model.signal, now) } else { None };
+        a.slot_attention = a.attention();
         let routine = (a.cfg.enabled && !crate::dock::session_idle() && (a.cfg.morning_briefing || a.cfg.day_wrap)).then_some(60_000);
-        let interval = [output.next, result, routine].into_iter().flatten().min();
+        let interval = [output.next, agent_news_next, routine].into_iter().flatten().min();
         if let Some(ms) = interval { a.arm(Some(a.timer.map_or(ms, |old| old.min(ms)))); }
         if output.body {
             a.purpose.notice(false);
@@ -1106,6 +1095,7 @@ pub fn shutdown() {
     downloads::configure(false);
     card::close();
     news::shutdown();
+    agent_news::shutdown();
     chat::shutdown();
     unsafe {
         let _ = KillTimer(
@@ -1264,23 +1254,3 @@ pub(super) fn input_blocked()->bool {
     crate::dock::companion_mode()!=visibility::Mode::Run || APP.with(|a|a.try_borrow().map_or(true,|a|a.as_ref().is_some_and(|a|a.hidden_since.is_some() || a.yielding)))
 }
 pub fn displays_changed(){let monitors=interaction::monitors();APP.with(|a|{if let Ok(mut a)=a.try_borrow_mut(){if let Some(a)=a.as_mut(){a.home_monitors=monitors;a.grounds.clear();if let Some(p)=&a.pacer{p.refresh_display();}if !a.grab.busy()&&a.cfg.home.is_some(){a.restore_home();}a.ground_due=Instant::now();}}});refresh();}
-
-#[cfg(test)]
-mod slot_wake_tests {
-    use super::*;
-    use std::time::Duration;
-    #[test]
-    fn hidden_dot_wakes_at_its_deadline_not_every_quarter_second() {
-        let now = Instant::now();
-        let mut s = model::Signal::default();
-        // Agent waits alone: refreshed on change, no polling.
-        assert_eq!(slot_wake(&s, now), None);
-        // A result shown 1 s ago lapses at 4 s: about 3 s from now.
-        s.result = Some((now - Duration::from_secs(1), true));
-        let w = slot_wake(&s, now).unwrap();
-        assert!((2900..=3100).contains(&w), "{w}");
-        // An expired result needs no new timer.
-        s.result = Some((now - Duration::from_secs(10), true));
-        assert_eq!(slot_wake(&s, now), None);
-    }
-}

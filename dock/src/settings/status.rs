@@ -16,20 +16,23 @@ use crate::shortcuts::{self, Chord};
 pub(super) enum Fix {
     /// Windows' Settings > Apps > Startup.
     StartupApps,
+    ReconnectCodex,
 }
 
 impl Fix {
     pub(super) fn label(self) -> &'static str {
         match self {
             Fix::StartupApps => t("settings.startup.open"),
+            Fix::ReconnectCodex => t("settings.agents.reconnect"),
         }
     }
 
-    pub(super) fn run(self) {
+    pub(super) fn run(self, hwnd: windows::Win32::Foundation::HWND) {
         match self {
             Fix::StartupApps => {
                 crate::launch::open(&crate::launch::Target::new("ms-settings:startupapps", "", crate::launch::Source::Settings));
             }
+            Fix::ReconnectCodex => crate::companion::chat::settings::set_mcp(hwnd, 1, true),
         }
     }
 }
@@ -90,6 +93,10 @@ impl App {
     /// hotkey is really registered, so its note shows at once; "start
     /// with Windows" changes only on Save, so an unsaved switch has none.
     pub(super) fn row_note(&self, key: &str) -> Option<(String, Option<Fix>)> {
+        if key == "chat.codex_mcp" {
+            return super::agent_notifications::codex_status(&self.cfg)
+                .map(|key| (t(key).into(), Some(Fix::ReconnectCodex)));
+        }
         if key == "chat.login" {
             return Some((
                 if cfg!(test) {

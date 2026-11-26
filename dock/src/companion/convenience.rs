@@ -137,6 +137,19 @@ fn slot_picked(id:u32,t:u64)->Option<Action>{Some(match id {
         1=>Action::Hide,10=>Action::Size(0.34),11=>Action::Size(0.42),12=>Action::Size(0.56),13=>Action::Size(0.70),20=>Action::Rest(t+1800),21=>Action::Rest(t+3600),22=>Action::Rest(tomorrow(t)),31=>Action::Ignore,33=>Action::Settings,_=>return None,
     })}
 thread_local! { static MENU_PRIORITY: std::cell::RefCell<Option<super::cues::Click>> = const { std::cell::RefCell::new(None) }; }
+thread_local! {
+    static MENU_WAITS: std::cell::RefCell<Vec<crate::agents::Target>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+const AGENT_MENU_BASE: u32 = 100;
+
+pub(super) fn waiting_items(sessions: &[crate::agents::Session]) -> impl Iterator<Item = Item> + '_ {
+    sessions.iter().enumerate().map(|(i, session)| {
+        let label = super::agent_news::session_label(session);
+        let status = crate::i18n::t("assistant.agent_wait");
+        Item::new(AGENT_MENU_BASE + i as u32, format!("{label} · {status}"))
+    })
+}
+
 /// The old home-cell controls live inside the bar's NopBar menu.
 pub fn bar_items() -> Vec<Item> {
     let cfg = APP.with(|a| a.borrow().as_ref().map(|a| a.cfg));
@@ -153,6 +166,9 @@ pub fn bar_items() -> Vec<Item> {
         rows.insert(0, Item::new(2, crate::i18n::t(key)));
     }
     rows.insert(0, news_item(super::news::unread()));
+    let sessions = crate::agents::waiting_sessions();
+    rows.splice(1..1, waiting_items(&sessions));
+    MENU_WAITS.with(|waits| *waits.borrow_mut() = sessions.iter().map(crate::agents::Session::target).collect());
     rows
 }
 pub(super) fn news_item(unread: usize) -> Item {
@@ -165,7 +181,13 @@ pub(super) fn news_item(unread: usize) -> Item {
 }
 
 pub fn bar_picked(id: u32) {
-    if id == 3 { super::news::open(); }
+    if let Some(i) = id.checked_sub(AGENT_MENU_BASE) {
+        let target = MENU_WAITS.with(|waits| waits.borrow().get(i as usize).cloned());
+        if let Some(target) = target {
+            crate::agents::focus(&target);
+        }
+    }
+    else if id == 3 { super::news::open(); }
     else if id == 2 { if let Some(action) = MENU_PRIORITY.with(|p| p.borrow_mut().take()) { super::slot_click_with(action); } }
     else if id == 1 {
         let visible = APP.with(|a| a.borrow().as_ref().is_some_and(|a| a.cfg.visible));
@@ -174,6 +196,21 @@ pub fn bar_picked(id: u32) {
 }
 #[cfg(test)] mod tests {
  use super::*;
+ #[test]
+ fn waiting_menu_rows_use_folder_names_and_distinct_actions() {
+  use crate::agents::{Agent, St, test_session};
+  let _lang = crate::i18n::test_lock("ko");
+  let now = std::time::Instant::now();
+  assert_eq!(waiting_items(&[]).count(), 0);
+  let sessions = [
+   test_session(Agent::Codex, "project", St::Wait, now, false),
+   test_session(Agent::Claude, "sample", St::Wait, now, true),
+  ];
+  let rows: Vec<_> = waiting_items(&sessions).collect();
+  assert_eq!(rows[0].label, "Codex · project · 입력 대기");
+  assert_eq!(rows[1].label, "Claude · sample · 입력 대기");
+  assert_ne!(rows[0].id, rows[1].id);
+ }
  #[test] fn looking_up_from_a_narrow_pose_stays_clear_of_the_menu() {
   unsafe {let _=windows::Win32::System::Com::CoInitializeEx(None,windows::Win32::System::Com::COINIT_APARTMENTTHREADED);}
   for dpi in [1.,1.25,1.5,2.] {for scale in [0.34,0.56,0.70] {

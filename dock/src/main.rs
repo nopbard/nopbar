@@ -89,6 +89,12 @@ fn main() -> Result<()> {
     if args.get(1).map(String::as_str) == Some("--note-reminder") {
         if args.get(2).is_none_or(|url| notes::toast::cli(url)) { return Ok(()); }
     }
+    if args.get(1).is_some_and(|arg| arg == "--agent-news") {
+        if let Some(url) = args.get(2) {
+            companion::agent_toast::cli(url);
+        }
+        return Ok(());
+    }
     if release::parse_cli(&args)==release::Cli::WidgetsAdd {
         desklayer::shell::forward_existing();
         std::process::exit(0);

@@ -2174,7 +2174,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         return LRESULT(0);
     }
     match msg {
-        WM_COPYDATA => LRESULT(crate::notes::toast::receive(lp) as isize),
+        WM_COPYDATA => LRESULT((crate::notes::toast::receive(lp) || crate::companion::agent_toast::receive(lp)) as isize),
         WM_DEV_HANG if DEV_SIGNALS.load(Ordering::SeqCst) => {
             crate::log!("dev: hanging the UI thread for 40 s");
             std::thread::sleep(std::time::Duration::from_secs(40));

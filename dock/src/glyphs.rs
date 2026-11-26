@@ -777,6 +777,72 @@ pub fn flatten(cmds: &[Cmd]) -> Vec<(Vec<P>, bool)> {
     out
 }
 
+pub(crate) unsafe fn provider_logo(
+    dc: &windows::Win32::Graphics::Direct2D::ID2D1DeviceContext,
+    name: &str,
+    x: f32,
+    y: f32,
+    size: f32,
+    color: D2D1_COLOR_F,
+) -> Result<()> {
+    use windows::core::Interface;
+    use windows::Win32::{
+        Foundation::E_FAIL,
+        Graphics::Direct2D::{Common::D2D_SIZE_F, ID2D1DeviceContext5},
+        UI::Shell::SHCreateMemStream,
+    };
+    use windows_numerics::Matrix3x2;
+    let color = format!(
+        "#{:02x}{:02x}{:02x}",
+        (color.r * 255.) as u8,
+        (color.g * 255.) as u8,
+        (color.b * 255.) as u8
+    );
+    let source = match name {
+        "ChatGPT" => include_str!("../../assets/brands/openai.svg"),
+        "Claude" | "Claude Code" => include_str!("../../assets/brands/claude.svg"),
+        "Antigravity" => include_str!("../../assets/brands/antigravity.svg"),
+        _ => return Err(windows::core::Error::from(E_FAIL)),
+    };
+    // Normalize the artwork bounds, not the source canvas: OpenAI carries
+    // much more built-in padding than Claude. All marks share a 72% slot.
+    let mut svg = source
+        .replace(
+            "viewBox=\"0 0 721 721\"",
+            "viewBox=\"118.557 119.958 484.139 479.818\"",
+        )
+        .replace("viewBox=\"0 0 248 248\"", "viewBox=\"6.2 6.2 235.6 235.6\"")
+        .replace("viewBox=\"22 24 92 88\"", "viewBox=\"24 28 88 80\"")
+        .replace("fill=\"black\"", &format!("fill=\"{color}\""))
+        .replace("fill=\"#000000\"", &format!("fill=\"{color}\""));
+    for n in [721, 248, 136] {
+        svg = svg
+            .replace(&format!("width=\"{n}\""), "width=\"100%\"")
+            .replace(&format!("height=\"{n}\""), "height=\"100%\"");
+    }
+    let stream = SHCreateMemStream(Some(svg.as_bytes()))
+        .ok_or_else(|| windows::core::Error::from(E_FAIL))?;
+    let dc5: ID2D1DeviceContext5 = dc.cast()?;
+    let doc = dc5.CreateSvgDocument(
+        &stream,
+        D2D_SIZE_F {
+            width: size,
+            height: size,
+        },
+    )?;
+    let mut transform = Matrix3x2::identity();
+    dc.GetTransform(&mut transform);
+    let offset = Matrix3x2 {
+        M31: x,
+        M32: y,
+        ..Matrix3x2::identity()
+    };
+    dc.SetTransform(&(offset * transform));
+    dc5.DrawSvgDocument(&doc);
+    dc.SetTransform(&transform);
+    Ok(())
+}
+
 // ---- the brand mark ---------------------------------------------------------------
 
 /// The gnome mark's hat (with the nose under its brim) on the grid:
