@@ -9,24 +9,26 @@
 //! left to right; `on_screen` / `screen_x` mirror it when drawing. Clicks
 //! are hit-tested in window coordinates against the drawn rects (the same
 //! half-open `[left, right)` either way); only the dragged icon's position
-//! goes back through `logical`. Text and the gnome mark are placed mirrored
+//! goes back through `logical`. Text and the app icon are placed mirrored
 //! but not flipped.
 
 use windows::core::{w, Interface, Result, BOOL, HSTRING};
 
-use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_BEZIER_SEGMENT, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED, D2D1_FILL_MODE_WINDING, D2D1_GRADIENT_STOP, D2D_RECT_F,
-};
+use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Factory, ID2D1PathGeometry, ID2D1RenderTarget, ID2D1SolidColorBrush, ID2D1StrokeStyle, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID,
-    D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2, D2D1_LINE_JOIN_ROUND, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_ROUNDED_RECT,
-    D2D1_STROKE_STYLE_PROPERTIES,
+    ID2D1Bitmap, ID2D1Factory, ID2D1RenderTarget, ID2D1SolidColorBrush, ID2D1StrokeStyle, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+    D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID, D2D1_DRAW_TEXT_OPTIONS_NONE,
+    D2D1_LINE_JOIN_ROUND, D2D1_ROUNDED_RECT, D2D1_STROKE_STYLE_PROPERTIES,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteFactory2, IDWriteFontCollection, IDWriteTextFormat, IDWriteTextFormat1, DWRITE_FACTORY_TYPE_SHARED,
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
     DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_READING_DIRECTION_LEFT_TO_RIGHT, DWRITE_READING_DIRECTION_RIGHT_TO_LEFT,
     DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_UNICODE_RANGE, DWRITE_WORD_WRAPPING_NO_WRAP, DWRITE_WORD_WRAPPING_WRAP,
+};
+use windows::Win32::Graphics::Imaging::{
+    IWICImagingFactory, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, WICBitmapInterpolationModeFant,
+    WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnLoad,
 };
 use windows_numerics::{Matrix3x2, Vector2};
 
@@ -166,85 +168,8 @@ impl Scene<'_> {
     }
 }
 
-// ---------------------------------------------------------------- the mark
-
-/// The gnome mark (assets/brand/icon.svg), in its 1024 viewBox: the hat
-/// (with the nose under its brim) and the beard, each in its own color.
-pub const GNOME_HAT: &str = "M251 558 C238 552 246 534 256 512 C298 426 362 336 422 242 C486 144 560 98 636 98 C712 98 768 138 782 198 C796 248 772 280 748 281 C738 281 735 275 742 264 C758 238 718 190 678 190 C636 190 602 218 588 254 C576 294 596 330 618 362 C652 420 690 488 704 530 C710 544 712 552 702 558 C650 522 590 505 530 502 C528 534 512 549 482 549 C452 549 438 532 437 502 C370 505 300 524 251 558 Z";
-pub const GNOME_BEARD: &str = "M264 590 C270 658 364 712 478 712 C592 712 686 658 694 590 C718 610 724 648 712 696 C684 778 608 854 508 914 C490 927 478 932 460 922 C366 874 276 794 248 720 C228 666 234 614 264 590 Z";
-/// Each part's top and bottom in the box (its gradient's ends).
-const HAT_SPAN: (f32, f32) = (98.0, 558.0);
-const BEARD_SPAN: (f32, f32) = (590.0, 932.0);
-
-/// A path of `M x y`, `C x1 y1 x2 y2 x y` (repeatable) and `Z`.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Seg {
-    Move(f32, f32),
-    Cubic([f32; 6]),
-    Close,
-}
-
-pub fn parse_path(d: &str) -> Option<Vec<Seg>> {
-    let mut out = Vec::new();
-    // Commands may touch their numbers ("M251 558").
-    let spaced: String = d.chars().flat_map(|c| if c.is_ascii_alphabetic() { [' ', c, ' '] } else if c == ',' { [' ', ' ', ' '] } else { [c, ' ', ' '] }).filter(|&c| c != ' ').collect();
-    let mut tokens = spaced.split_ascii_whitespace().peekable();
-    let num = |t: &mut std::iter::Peekable<std::str::SplitAsciiWhitespace>| t.next()?.parse::<f32>().ok();
-    while let Some(cmd) = tokens.next() {
-        match cmd {
-            "M" => out.push(Seg::Move(num(&mut tokens)?, num(&mut tokens)?)),
-            "C" => loop {
-                let mut c = [0.0; 6];
-                for v in &mut c {
-                    *v = num(&mut tokens)?;
-                }
-                out.push(Seg::Cubic(c));
-                if !tokens.peek().is_some_and(|t| t.parse::<f32>().is_ok()) {
-                    break;
-                }
-            },
-            "Z" => out.push(Seg::Close),
-            _ => return None,
-        }
-    }
-    Some(out)
-}
-
 fn v(x: f32, y: f32) -> Vector2 {
     Vector2 { X: x, Y: y }
-}
-
-fn gnome_geometry(factory: &ID2D1Factory, d: &str) -> Result<ID2D1PathGeometry> {
-    let segs = parse_path(d).expect("the gnome path parses");
-    unsafe {
-        let g = factory.CreatePathGeometry()?;
-        let sink = g.Open()?;
-        sink.SetFillMode(D2D1_FILL_MODE_WINDING);
-        let mut open = false;
-        for s in segs {
-            match s {
-                Seg::Move(x, y) => {
-                    if open {
-                        sink.EndFigure(D2D1_FIGURE_END_CLOSED);
-                    }
-                    sink.BeginFigure(v(x, y), D2D1_FIGURE_BEGIN_FILLED);
-                    open = true;
-                }
-                Seg::Cubic(c) => sink.AddBezier(&D2D1_BEZIER_SEGMENT { point1: v(c[0], c[1]), point2: v(c[2], c[3]), point3: v(c[4], c[5]) }),
-                Seg::Close => {
-                    if open {
-                        sink.EndFigure(D2D1_FIGURE_END_CLOSED);
-                        open = false;
-                    }
-                }
-            }
-        }
-        if open {
-            sink.EndFigure(D2D1_FIGURE_END_CLOSED);
-        }
-        sink.Close()?;
-        Ok(g)
-    }
 }
 
 // ---------------------------------------------------------------- resources
@@ -257,8 +182,6 @@ pub struct Resources {
     hint: IDWriteTextFormat,
     message: IDWriteTextFormat,
     button: IDWriteTextFormat,
-    /// The gnome mark's hat and beard.
-    gnome: (ID2D1PathGeometry, ID2D1PathGeometry),
     round: ID2D1StrokeStyle,
 }
 
@@ -314,7 +237,6 @@ impl Resources {
                 hint: format(11.0, DWRITE_FONT_WEIGHT_NORMAL, false)?,
                 message: format(12.0, DWRITE_FONT_WEIGHT_NORMAL, false)?,
                 button: format(12.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, false)?,
-                gnome: (gnome_geometry(&factory, GNOME_HAT)?, gnome_geometry(&factory, GNOME_BEARD)?),
                 round,
                 factory,
                 rtl,
@@ -390,9 +312,29 @@ fn text(rt: &ID2D1RenderTarget, s: &str, format: &IDWriteTextFormat, r: D2D_RECT
     Ok(())
 }
 
+/// Prefilter the canonical app icon to its physical size at rest. The
+/// bitmap belongs to this render target and is rebuilt when its DPI changes.
+pub fn load_icon(rt: &ID2D1RenderTarget, wic: &IWICImagingFactory) -> Result<ID2D1Bitmap> {
+    const ICON_PNG: &[u8] = include_bytes!("../../../assets/brand/icon-256.png");
+    unsafe {
+        let (mut dpi_x, mut dpi_y) = (0.0, 0.0);
+        rt.GetDpi(&mut dpi_x, &mut dpi_y);
+        let side = |dpi: f32| (ICON * dpi / 96.0).round().max(1.0) as u32;
+        let stream = wic.CreateStream()?;
+        stream.InitializeFromMemory(ICON_PNG)?;
+        let decoder = wic.CreateDecoderFromStream(&stream, std::ptr::null(), WICDecodeMetadataCacheOnLoad)?;
+        let frame = decoder.GetFrame(0)?;
+        let converter = wic.CreateFormatConverter()?;
+        converter.Initialize(&frame, &GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, None, 0.0, WICBitmapPaletteTypeCustom)?;
+        let scaler = wic.CreateBitmapScaler()?;
+        scaler.Initialize(&converter, side(dpi_x), side(dpi_y), WICBitmapInterpolationModeFant)?;
+        rt.CreateBitmapFromWicBitmap(&scaler, None)
+    }
+}
+
 /// Draws `scene` with its top-left at `base` (the window: identity),
 /// mirrored when `res.rtl`.
-pub fn draw(rt: &ID2D1RenderTarget, res: &Resources, pal: &Palette, s: &Strings, scene: &Scene, base: Matrix3x2) -> Result<()> {
+pub fn draw(rt: &ID2D1RenderTarget, icon: &ID2D1Bitmap, res: &Resources, pal: &Palette, s: &Strings, scene: &Scene, base: Matrix3x2) -> Result<()> {
     let rtl = res.rtl;
     let sx = |x: f32| screen_x(x, rtl);
     let place = |r: D2D_RECT_F| on_screen(r, rtl);
@@ -464,9 +406,17 @@ pub fn draw(rt: &ID2D1RenderTarget, res: &Resources, pal: &Palette, s: &Strings,
 
         // The icon last: dragged, it passes over everything.
         if scene.icon_alpha > 0.005 {
-            let a = scene.icon_alpha.clamp(0.0, 1.0);
-            draw_icon(rt, res, pal, (sx(scene.icon.0), scene.icon.1), ICON * scene.icon_scale, a, base)?;
-            rt.SetTransform(&base);
+            let (cx, cy) = (sx(scene.icon.0), scene.icon.1);
+            let half = ICON * scene.icon_scale / 2.0;
+            let dest = rect(cx - half, cy - half, cx + half, cy + half);
+            // Use the prefiltered pixels at full size and smooth the shrink
+            // as the icon flies into the folder.
+            let interpolation = if scene.icon_scale == 1.0 {
+                D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+            } else {
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR
+            };
+            rt.DrawBitmap(icon, Some(&dest), scene.icon_alpha.clamp(0.0, 1.0), interpolation, None);
         }
     }
     Ok(())
@@ -505,76 +455,9 @@ fn draw_folder(rt: &ID2D1RenderTarget, _res: &Resources, pal: &Palette, center: 
     Ok(())
 }
 
-/// The app icon (assets/brand/icon.svg's colors and mark; the plate the
-/// setup mockup's rounded square): top-to-bottom gradient, the gnome mark
-/// in its two colors; `size` DIP wide at `center`, opacity `a`.
-fn draw_icon(rt: &ID2D1RenderTarget, res: &Resources, pal: &Palette, center: (f32, f32), size: f32, a: f32, base: Matrix3x2) -> Result<()> {
-    unsafe {
-        rt.SetTransform(&base);
-        let (ox, oy) = (center.0 - size / 2.0, center.1 - size / 2.0);
-        let body = rect(ox, oy, ox + size, oy + size);
-        // The mockup's square: rx 208 on 896 (icon.svg before its squircle).
-        let radius = size * 208.0 / 896.0;
-        if pal.shadow.a > 0.0 {
-            // A soft drop shadow (the mockup's 0 6px 16px): equal thin
-            // layers from inside the icon (their edges hidden under it) out
-            // to 14 DIP, so the darkness fades with no edge.
-            let k = size / ICON;
-            let layers = 14;
-            let b = brush(rt, pal.shadow.alpha(pal.shadow.a * a * a * 1.25 / layers as f32))?;
-            for i in 0..layers {
-                let grow = (-6.0 + 20.0 * i as f32 / (layers - 1) as f32) * k;
-                let r = rect(body.left - grow, body.top - grow + 6.0 * k, body.right + grow, body.bottom + grow + 6.0 * k);
-                rt.FillRoundedRectangle(&rr(r, (radius + grow).max(1.0)), &b);
-            }
-        }
-        let stops = [D2D1_GRADIENT_STOP { position: 0.0, color: pal.icon_top.d2d() }, D2D1_GRADIENT_STOP { position: 1.0, color: pal.icon_bottom.d2d() }];
-        let coll = rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)?;
-        let grad = rt.CreateLinearGradientBrush(&D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES { startPoint: v(center.0, body.top), endPoint: v(center.0, body.bottom) }, None, &coll)?;
-        grad.SetOpacity(a);
-        rt.FillRoundedRectangle(&rr(body, radius), &grad);
-        if let Some(o) = pal.outline {
-            rt.DrawRoundedRectangle(&rr(body, radius), &brush(rt, o)?, 1.0, None);
-        }
-        // The mark at 0.7 of its 1024 box, centred like icon.svg's, on a
-        // square that starts at 64 of that box.
-        let k = size / 896.0;
-        let m = Matrix3x2 { M11: 0.7 * k, M12: 0.0, M21: 0.0, M22: 0.7 * k, M31: ox + 89.6 * k, M32: oy + 89.6 * k };
-        rt.SetTransform(&(m * base));
-        // Each part in its gradient (top to bottom of its own box, in the
-        // mark's box: the brush takes the same transform).
-        for (geom, (top, bottom), (y0, y1)) in [(&res.gnome.0, pal.hat, HAT_SPAN), (&res.gnome.1, pal.beard, BEARD_SPAN)] {
-            let stops = [D2D1_GRADIENT_STOP { position: 0.0, color: top.d2d() }, D2D1_GRADIENT_STOP { position: 1.0, color: bottom.d2d() }];
-            let coll = rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)?;
-            let fill = rt.CreateLinearGradientBrush(&D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES { startPoint: v(512.0, y0), endPoint: v(512.0, y1) }, None, &coll)?;
-            fill.SetOpacity(a);
-            rt.FillGeometry(geom, &fill, None);
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_gnome_path_parses() {
-        let (hat, beard) = (parse_path(GNOME_HAT).unwrap(), parse_path(GNOME_BEARD).unwrap());
-        for segs in [&hat, &beard] {
-            assert_eq!(segs.iter().filter(|s| matches!(s, Seg::Move(..))).count(), 1);
-            assert_eq!(segs.iter().filter(|s| matches!(s, Seg::Close)).count(), 1);
-        }
-        assert_eq!(hat.iter().chain(&beard).filter(|s| matches!(s, Seg::Cubic(..))).count(), 22);
-        assert_eq!(hat[0], Seg::Move(251.0, 558.0));
-        assert_eq!(beard[0], Seg::Move(264.0, 590.0));
-        assert_eq!(parse_path("M 1 2 L 3 4"), None, "only M, C and Z");
-        assert_eq!(parse_path("M1,2C3 4 5 6 7 8Z"), Some(vec![Seg::Move(1.0, 2.0), Seg::Cubic([3.0, 4.0, 5.0, 6.0, 7.0, 8.0]), Seg::Close]));
-        assert_eq!(parse_path("M 1"), None);
-        // mark.svg has the same mark (icon.svg is the gnome character since 0.1.113).
-        let svg = include_str!("../../../assets/brand/mark.svg");
-        assert!(svg.contains(GNOME_HAT) && svg.contains(GNOME_BEARD));
-    }
 
     #[test]
     fn layout_matches_the_mockup() {

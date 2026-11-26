@@ -77,6 +77,7 @@ pub fn render(wic: &IWICImagingFactory, factory: &ID2D1Factory, dark: bool, lang
             minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
         };
         let rt: ID2D1RenderTarget = factory.CreateWicBitmapRenderTarget(&bmp, &props)?;
+        let icon = draw::load_icon(&rt, wic)?;
         let res = Resources::new(factory.clone(), lang)?;
         let pal = palette(dark, None);
         rt.BeginDraw();
@@ -107,7 +108,7 @@ pub fn render(wic: &IWICImagingFactory, factory: &ID2D1Factory, dark: bool, lang
             None,
         );
         let base = Matrix3x2 { M11: 1.0, M12: 0.0, M21: 0.0, M22: 1.0, M31: pad, M32: pad };
-        let drawn = draw::draw(&rt, &res, &pal, strings::table(lang), &scene(shot, lang), base);
+        let drawn = draw::draw(&rt, &icon, &res, &pal, strings::table(lang), &scene(shot, lang), base);
         rt.PopLayer();
         rt.EndDraw(None, None)?;
         drawn?;
@@ -153,6 +154,8 @@ pub fn render_all(dir: &Path, scale: f32) -> Result<Vec<std::path::PathBuf>> {
             ("ready", Shot::Ready, ko),
             ("drag", Shot::Dragging, ko),
             ("busy", Shot::Busy(0.58), ko),
+            // The finished window holds the full bar before it closes.
+            ("done", Shot::Busy(1.0), ko),
             ("failed", Shot::Failed, ko),
             ("focus", Shot::Focused, ko),
             ("ready-en", Shot::Ready, Lang::EN),
@@ -194,6 +197,32 @@ mod tests {
     }
 
     #[test]
+    fn setup_window_draws_the_app_icon_at_supported_dpis() {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).unwrap();
+            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).unwrap();
+            for scale in [1.0, 1.25, 1.5, 2.0, 2.5] {
+                for dark in [false, true] {
+                    let (w, _, px) = pixels(&render(&wic, &factory, dark, Lang::EN, Shot::Ready, scale, 0.0).unwrap());
+                    let (cx, cy) = draw::ICON_HOME;
+                    let at = |u: f32, v: f32| {
+                        let x = ((cx + draw::ICON * (u - 0.5)) * scale) as u32;
+                        let y = ((cy + draw::ICON * (v - 0.5)) * scale) as u32;
+                        let i = ((y * w + x) * 4) as usize;
+                        &px[i..i + 4]
+                    };
+                    // The hat, nose and beard are flat, opaque brand colors.
+                    assert_eq!(at(0.5, 0.25), [82, 96, 206, 255], "hat at {scale}x, dark {dark}");
+                    assert_eq!(at(0.5, 0.625), [146, 185, 254, 255], "nose at {scale}x, dark {dark}");
+                    assert_eq!(at(0.5, 0.8125), [252, 253, 253, 255], "beard at {scale}x, dark {dark}");
+                    assert_eq!(at(0.125, 0.125), if dark { [31, 30, 30, 255] } else { [255; 4] }, "transparent corner at {scale}x, dark {dark}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn every_state_draws_in_both_modes_and_in_high_contrast() {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -217,9 +246,10 @@ mod tests {
                 ..Default::default()
             };
             let rt = factory.CreateWicBitmapRenderTarget(&bmp, &props).unwrap();
+            let icon = draw::load_icon(&rt, &wic).unwrap();
             let res = Resources::new(factory.clone(), lang("ko")).unwrap();
             rt.BeginDraw();
-            draw::draw(&rt, &res, &palette(false, Some(hc)), strings::table(lang("ko")), &scene(Shot::Failed, lang("ko")), Matrix3x2::identity()).unwrap();
+            draw::draw(&rt, &icon, &res, &palette(false, Some(hc)), strings::table(lang("ko")), &scene(Shot::Failed, lang("ko")), Matrix3x2::identity()).unwrap();
             rt.EndDraw(None, None).unwrap();
         }
     }

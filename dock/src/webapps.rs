@@ -1143,7 +1143,12 @@ mod tests {
         assert!(reads.borrow().is_empty());
         assert_eq!(ix2.links, ix.links);
 
+        // A folder's write time moves in system clock ticks (about 15.6 ms):
+        // a fast machine (CI) could change it within the tick it was read in.
+        let tick = || std::thread::sleep(std::time::Duration::from_millis(40));
+
         // A new shortcut: its folder changed; only it is read.
+        tick();
         let c = t.0.join(r"Chrome 앱\C.lnk");
         std::fs::write(&c, "Chrome._crx_cccc").unwrap();
         assert!(ix.moved(), "a shortcut made shows on its folder");
@@ -1152,6 +1157,7 @@ mod tests {
         ix = ix3;
 
         // Renamed: the folder says so; the AUMID moves to the new path.
+        tick();
         let a2 = t.0.join(r"Chrome 앱\A2.lnk");
         std::fs::rename(&a, &a2).unwrap();
         assert!(ix.moved());

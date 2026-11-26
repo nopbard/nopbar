@@ -1,7 +1,5 @@
 //! Colors: near-white or near-black, achromatic, following the Windows app
-//! mode (the one exception: the app icon's gnome mark, the brand's brick hat
-//! and grey beard); high contrast takes the system colors and draws
-//! outlines.
+//! mode. High contrast takes the system colors and draws outlines.
 
 use windows::core::w;
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
@@ -60,14 +58,6 @@ pub struct Palette {
     pub folder_back: Rgba,
     pub folder_front: Rgba,
     pub folder_glyph: Rgba,
-    pub icon_top: Rgba,
-    pub icon_bottom: Rgba,
-    /// The gnome mark's hat and beard: (top, bottom) of each one's vertical
-    /// gradient (assets/brand/icon.svg, scripts/brand-icons.py MARK).
-    pub hat: (Rgba, Rgba),
-    pub beard: (Rgba, Rgba),
-    /// The icon's shadow (its alpha is the strength; 0 = none).
-    pub shadow: Rgba,
     pub hover: Rgba,
     pub focus: Rgba,
     /// High contrast: shapes get a 1 px outline in this color.
@@ -87,18 +77,11 @@ pub fn palette(dark: bool, hc: Option<HighContrast>) -> Palette {
             folder_back: hc.window,
             folder_front: hc.window,
             folder_glyph: hc.text,
-            icon_top: hc.window,
-            icon_bottom: hc.window,
-            hat: (hc.text, hc.text),
-            beard: (hc.text, hc.text),
-            shadow: hc.text.alpha(0.0),
             hover: hc.highlight,
             focus: hc.highlight,
             outline: Some(hc.text),
         };
     }
-    // The approved mockup (docs/research/2026-11-07-setup-window-mockup.html);
-    // the dark icon is the brand icon's (assets/brand/icon.svg).
     let (bg, strip, ink) = if dark {
         (Rgba::hex(0x1E1E1F), Rgba::hex(0x262627), Rgba::hex(0xF2F2F2))
     } else {
@@ -115,11 +98,6 @@ pub fn palette(dark: bool, hc: Option<HighContrast>) -> Palette {
         folder_back: ink.mix(bg, 0.22),
         folder_front: ink.mix(bg, 0.34),
         folder_glyph: bg,
-        icon_top: if dark { Rgba::hex(0x3A3A3A) } else { Rgba::hex(0xFFFFFF) },
-        icon_bottom: if dark { Rgba::hex(0x242424) } else { Rgba::hex(0xECECEB) },
-        hat: if dark { (Rgba::hex(0xD88A7C), Rgba::hex(0xB0615A)) } else { (Rgba::hex(0xC97B6E), Rgba::hex(0xA0534A)) },
-        beard: if dark { (Rgba::hex(0xF8F8F9), Rgba::hex(0xC6C7CA)) } else { (Rgba::hex(0x696A6F), Rgba::hex(0x2F3033)) },
-        shadow: Rgba::hex(0x000000).alpha(if dark { 0.45 } else { 0.16 }),
         hover: ink.alpha(if dark { 0.10 } else { 0.07 }),
         focus: ink.alpha(0.85),
         outline: None,
@@ -180,16 +158,9 @@ mod tests {
     fn both_modes_are_achromatic_with_no_outlines() {
         for dark in [false, true] {
             let p = palette(dark, None);
-            for c in [p.bg, p.strip, p.ink, p.ink2, p.track, p.fill, p.folder_back, p.folder_front, p.folder_glyph, p.icon_top, p.icon_bottom, p.shadow, p.hover, p.focus] {
+            for c in [p.bg, p.strip, p.ink, p.ink2, p.track, p.fill, p.folder_back, p.folder_front, p.folder_glyph, p.hover, p.focus] {
                 assert!(achromatic(c), "{c:?}");
             }
-            // The brand's one color: the gnome's hat; both parts the icons'.
-            let script = include_str!("../../../scripts/brand-icons.py");
-            for c in [p.hat.0, p.hat.1, p.beard.0, p.beard.1] {
-                let hex = format!("#{:02X}{:02X}{:02X}", (c.r * 255.0).round() as u8, (c.g * 255.0).round() as u8, (c.b * 255.0).round() as u8);
-                assert!(script.contains(&hex), "{hex} is a brand mark color");
-            }
-            assert!(!achromatic(p.hat.0));
             assert_eq!(p.outline, None);
             // Readable: the ink far from the background.
             let lum = |c: Rgba| 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
@@ -209,8 +180,6 @@ mod tests {
         assert_eq!(p.ink2, hc.text, "no dimmed text in high contrast");
         assert_eq!(p.fill, hc.highlight);
         assert_eq!(p.outline, Some(hc.text));
-        assert_eq!(p.shadow.a, 0.0);
-        assert_eq!((p.hat, p.beard), ((hc.text, hc.text), (hc.text, hc.text)), "the mark in one color");
     }
 
     #[test]

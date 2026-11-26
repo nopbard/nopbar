@@ -20,12 +20,13 @@ use windows::core::{w, Result, BOOL, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_SIZE_U};
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE,
-    D2D1_RENDER_TARGET_PROPERTIES,
+    D2D1CreateFactory, ID2D1Bitmap, ID2D1Factory, ID2D1HwndRenderTarget, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_HWND_RENDER_TARGET_PROPERTIES,
+    D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ScreenToClient, UpdateWindow, MONITORINFO, MONITOR_DEFAULTTOPRIMARY, PAINTSTRUCT};
+use windows::Win32::Graphics::Imaging::{CLSID_WICImagingFactory, IWICImagingFactory};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
@@ -134,6 +135,11 @@ enum Phase {
     Failed { failure: Failure, t0: Instant },
 }
 
+struct WindowTarget {
+    rt: ID2D1HwndRenderTarget,
+    icon: ID2D1Bitmap,
+}
+
 struct App {
     hwnd: HWND,
     dpi: u32,
@@ -142,7 +148,7 @@ struct App {
     look: Look,
     pal: Palette,
     res: Resources,
-    rt: Option<ID2D1HwndRenderTarget>,
+    rt: Option<WindowTarget>,
     phase: Phase,
     /// The icon's center at rest or while dragged.
     icon: (f32, f32),
@@ -388,11 +394,11 @@ impl App {
         if self.rt.is_none() {
             self.rt = self.make_target().ok();
         }
-        let Some(rt) = self.rt.clone() else { return };
+        let Some(WindowTarget { rt, icon }) = &self.rt else { return };
         let scene = self.scene(Instant::now());
         unsafe {
             rt.BeginDraw();
-            let _ = draw::draw(&rt, &self.res, &self.pal, self.s, &scene, Matrix3x2::identity());
+            let _ = draw::draw(rt, icon, &self.res, &self.pal, self.s, &scene, Matrix3x2::identity());
             if rt.EndDraw(None, None).is_err() {
                 // D2DERR_RECREATE_TARGET (device lost) and the like.
                 self.rt = None;
@@ -401,7 +407,7 @@ impl App {
         }
     }
 
-    fn make_target(&self) -> Result<ID2D1HwndRenderTarget> {
+    fn make_target(&self) -> Result<WindowTarget> {
         unsafe {
             let mut rc = RECT::default();
             GetClientRect(self.hwnd, &mut rc)?;
@@ -416,7 +422,10 @@ impl App {
                 pixelSize: D2D_SIZE_U { width: (rc.right - rc.left).max(1) as u32, height: (rc.bottom - rc.top).max(1) as u32 },
                 presentOptions: D2D1_PRESENT_OPTIONS_NONE,
             };
-            self.res.factory.CreateHwndRenderTarget(&props, &hwnd_props)
+            let rt = self.res.factory.CreateHwndRenderTarget(&props, &hwnd_props)?;
+            let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+            let icon = draw::load_icon(&rt, &wic)?;
+            Ok(WindowTarget { rt, icon })
         }
     }
 
@@ -473,7 +482,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             WM_SIZE => {
                 let (w, h) = lparam_xy(lp);
                 with(|a| {
-                    if let Some(rt) = &a.rt {
+                    if let Some(WindowTarget { rt, .. }) = &a.rt {
                         let _ = rt.Resize(&D2D_SIZE_U { width: w.max(1) as u32, height: h.max(1) as u32 });
                     }
                     a.invalidate();
@@ -485,9 +494,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let r = *(lp.0 as *const RECT);
                 with(|a| {
                     a.dpi = dpi;
-                    if let Some(rt) = &a.rt {
-                        rt.SetDpi(dpi as f32, dpi as f32);
-                    }
+                    a.rt = None;
+                    a.invalidate();
                 });
                 let (w, h) = size_px(dpi);
                 let _ = SetWindowPos(hwnd, None, r.left, r.top, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
