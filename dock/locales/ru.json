@@ -1195,8 +1195,6 @@
   "assistant.news": "Новости",
   "assistant.news_unread": "Новости {n}",
   "assistant.agent_wait": "Ожидание ввода",
-  "assistant.agent_done": "Готово",
-  "assistant.agent_failed": "Сбой",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

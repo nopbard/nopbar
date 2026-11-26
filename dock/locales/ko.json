@@ -1265,8 +1265,6 @@
   "assistant.news": "소식",
   "assistant.news_unread": "소식 {n}",
   "assistant.agent_wait": "입력 대기",
-  "assistant.agent_done": "끝남",
-  "assistant.agent_failed": "실패",
   "assistant.morning": "오늘",
   "assistant.agenda": "일정",
   "assistant.reminders": "메모 알림",

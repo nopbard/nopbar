@@ -1195,8 +1195,6 @@
   "assistant.news": "Haberler",
   "assistant.news_unread": "Haberler {n}",
   "assistant.agent_wait": "Girdi bekleniyor",
-  "assistant.agent_done": "Tamamlandı",
-  "assistant.agent_failed": "Başarısız",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

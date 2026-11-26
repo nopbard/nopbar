@@ -1195,8 +1195,6 @@
   "assistant.news": "Neuigkeiten",
   "assistant.news_unread": "Neuigkeiten {n}",
   "assistant.agent_wait": "Wartet auf Eingabe",
-  "assistant.agent_done": "Fertig",
-  "assistant.agent_failed": "Fehlgeschlagen",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

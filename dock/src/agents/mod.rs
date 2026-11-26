@@ -125,7 +125,6 @@ pub fn event_of(agent: Agent, name: &str, ntype: &str) -> Ev {
 const MAX_TEXT: usize = 512;
 /// Sessions kept at most (the oldest finished ones go first).
 const MAX_SESSIONS: usize = 24;
-const MIN_NOTICE_TIME: Duration = Duration::from_secs(60);
 /// A working session nothing was heard from for this long no longer keeps
 /// the PC awake (a turn ended without a word: a crash, a lost line).
 pub const STALE: Duration = Duration::from_secs(30 * 60);
@@ -212,7 +211,6 @@ pub struct Session {
     pub hwnd: isize,
     pub host_exe: String,
     front_at_wait: bool,
-    started: Option<Instant>,
     /// The last line heard: when (STALE) and its hook's time.
     heard: Instant,
     last_t: u64,
@@ -281,18 +279,12 @@ impl CodexTurn {
 #[derive(Default)]
 pub struct Board {
     sessions: Vec<Session>,
-    completions: VecDeque<Completion>,
     ended_turns: VecDeque<(String, String)>,
-}
-
-pub(crate) struct Completion {
-    pub session: Session,
-    pub elapsed: Duration,
 }
 
 impl Board {
     pub const fn new() -> Board {
-        Board { sessions: Vec::new(), completions: VecDeque::new(), ended_turns: VecDeque::new() }
+        Board { sessions: Vec::new(), ended_turns: VecDeque::new() }
     }
 
     /// Pure: what `m` changes (true: something did).
@@ -351,11 +343,8 @@ impl Board {
                         return false;
                     }
                     (Ev::TrackTool | Ev::To(St::Wait | St::Work), St::Done) => return false,
-                    (Ev::To(St::Work), St::Wait) => {
-                        // An async prompt can reach the board after the synchronous approval.
-                        s.started.get_or_insert(now);
-                        return false;
-                    }
+                    // An async prompt can reach the board after the synchronous approval.
+                    (Ev::To(St::Work), St::Wait) => return false,
                     _ => {}
                 }
             }
@@ -385,7 +374,6 @@ impl Board {
                 let before = s.clone();
                 if new_turn {
                     s.codex = CodexTurn { id: m.turn.clone(), ..CodexTurn::default() };
-                    s.started = None;
                 }
                 let entered_wait = (s.st != St::Wait || new_turn) && st == St::Wait;
                 if s.st != st || new_turn || s.failed != (m.ev == Ev::Failure)
@@ -414,18 +402,9 @@ impl Board {
                 }
                 if entered_wait {
                     s.front_at_wait = foreground(s);
-                } else if st == St::Work {
-                    s.started.get_or_insert(now);
                 } else if st == St::Done {
                     s.codex.calls.clear();
                     s.codex.waiting.clear();
-                    let elapsed = s.started.take().map(|start| now.saturating_duration_since(start));
-                    if let Some(elapsed) = elapsed.filter(|d| *d >= MIN_NOTICE_TIME && m.ev != Ev::Idle && !foreground(s)) {
-                        if self.completions.len() == MAX_SESSIONS {
-                            self.completions.pop_front();
-                        }
-                        self.completions.push_back(Completion { session: s.clone(), elapsed });
-                    }
                 }
                 *s != before
             }
@@ -442,7 +421,6 @@ impl Board {
                     hwnd: m.hwnd,
                     host_exe: m.host_exe.clone(),
                     front_at_wait: false,
-                    started: (st == St::Work).then_some(now),
                     heard: now,
                     last_t: m.t,
                     codex: CodexTurn { id: m.turn.clone(), ..CodexTurn::default() },
@@ -607,21 +585,9 @@ pub(crate) fn waiting_sessions() -> Vec<Session> {
         .cloned().collect()).unwrap_or_default()
 }
 
-pub(crate) fn take_completions() -> Vec<Completion> {
-    let want = WANT.lock().ok().and_then(|w| *w).unwrap_or_default();
-    with(|b| b.completions.drain(..)
-        .filter(|c| notification_setting(c.session.agent, want))
-        .collect()).unwrap_or_default()
-}
-
 fn target_session(target: &Target) -> Option<Session> {
     with(|b| b.sessions.iter()
         .find(|s| s.key == target.key && s.agent_pid == target.agent_pid).cloned()).flatten()
-}
-
-pub(crate) fn show_result_for(target: &Target) -> bool {
-    let want = WANT.lock().ok().and_then(|w| *w).unwrap_or_default();
-    notification_setting(target.agent, want) && !target_session(target).is_some_and(|s| s.foreground())
 }
 
 pub(crate) fn focus(target: &Target) {
@@ -839,47 +805,6 @@ mod tests {
     }
 
     #[test]
-    fn completion_uses_first_work_across_wait_and_records_failure() {
-        let mut board = Board::new();
-        let now = Instant::now();
-        let state = |event| msg(Agent::Claude, "project", event);
-        board.apply(&state(Ev::To(St::Work)), now);
-        board.apply(&state(Ev::To(St::Wait)), now + Duration::from_secs(15));
-        board.apply(&state(Ev::To(St::Work)), now + Duration::from_secs(30));
-        board.apply(&state(Ev::Failure), now + MIN_NOTICE_TIME);
-        board.apply(&state(Ev::Failure), now + MIN_NOTICE_TIME);
-        board.apply(&state(Ev::To(St::Work)), now + Duration::from_secs(61));
-        let result = board.completions.pop_front().unwrap();
-        assert_eq!(result.elapsed, MIN_NOTICE_TIME);
-        assert!(result.session.failed);
-        assert!(board.completions.is_empty());
-    }
-
-    #[test]
-    fn completion_skips_short_unobserved_foreground_and_idle_turns() {
-        let now = Instant::now();
-        let state = |event| msg(Agent::Claude, "project", event);
-        for (duration, event, started, foreground) in [
-            (59, Ev::To(St::Done), true, false),
-            (60, Ev::To(St::Done), false, false),
-            (60, Ev::To(St::Done), true, true),
-            (60, Ev::Idle, true, false),
-        ] {
-            let mut board = Board::new();
-            if started {
-                board.apply(&state(Ev::To(St::Work)), now);
-            }
-            board.apply_event(&state(event), now + Duration::from_secs(duration), |_| foreground);
-            assert!(board.completions.is_empty(), "{event:?}");
-        }
-        let mut board = Board::new();
-        board.apply(&state(Ev::To(St::Work)), now);
-        board.apply(&state(Ev::To(St::Done)), now + MIN_NOTICE_TIME);
-        assert_eq!(board.completions.len(), 1);
-        assert!(!board.completions[0].session.failed);
-    }
-
-    #[test]
     fn hooks_map_to_states() {
         assert_eq!(event_of(Agent::Claude, "UserPromptSubmit", ""), Ev::To(St::Work));
         assert_eq!(event_of(Agent::Claude, "PostToolUse", ""), Ev::To(St::Work));
@@ -945,11 +870,11 @@ mod tests {
         board.apply(&msg(Agent::Codex, "legacy", Ev::LegacyDone), t0);
         assert_eq!(board.sessions[0].st, St::Wait);
         assert_eq!(board.sessions[1].key, "codex-notify:legacy");
-        assert!(board.apply(&signal("Stop", "", "", "t1", 17), t0 + MIN_NOTICE_TIME));
+        let later = t0 + Duration::from_secs(60);
+        assert!(board.apply(&signal("Stop", "", "", "t1", 17), later));
         assert_eq!(board.sessions[0].st, St::Done);
-        assert_eq!(board.completions.len(), 1);
-        assert!(!board.apply(&signal("PostToolUse", "d", "fixture command", "t1", 18), t0 + MIN_NOTICE_TIME));
-        assert!(!board.apply(&signal("UserPromptSubmit", "", "", "t1", 19), t0 + MIN_NOTICE_TIME));
+        assert!(!board.apply(&signal("PostToolUse", "d", "fixture command", "t1", 18), later));
+        assert!(!board.apply(&signal("UserPromptSubmit", "", "", "t1", 19), later));
     }
 
     #[test]

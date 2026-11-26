@@ -1195,8 +1195,6 @@
   "assistant.news": "Kabar",
   "assistant.news_unread": "Kabar {n}",
   "assistant.agent_wait": "Menunggu masukan",
-  "assistant.agent_done": "Selesai",
-  "assistant.agent_failed": "Gagal",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

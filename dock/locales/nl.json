@@ -1195,8 +1195,6 @@
   "assistant.news": "Nieuws",
   "assistant.news_unread": "Nieuws {n}",
   "assistant.agent_wait": "Wacht op invoer",
-  "assistant.agent_done": "Voltooid",
-  "assistant.agent_failed": "Mislukt",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

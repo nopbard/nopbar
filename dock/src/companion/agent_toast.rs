@@ -1,6 +1,6 @@
 //! Windows delivery for agent news when the companion has no card surface.
 use super::card::{Card, Route};
-use crate::agents::{Target, Wait};
+use crate::agents::Wait;
 use std::{cell::RefCell, collections::VecDeque, sync::OnceLock};
 use uuid::Uuid;
 use windows::{
@@ -23,7 +23,6 @@ const MAX_DELIVERED: usize = 128;
 #[derive(Clone)]
 enum Action {
     Wait(Wait),
-    Result(Target),
 }
 
 #[derive(Clone)]
@@ -59,7 +58,6 @@ impl Toast {
             .filter_map(|line| {
                 let action = match &line.route {
                     Route::AgentWait(wait) => Action::Wait(wait.clone()),
-                    Route::AgentResult(target) => Action::Result(target.clone()),
                     _ => return None,
                 };
                 Some(Row {
@@ -275,7 +273,6 @@ pub(super) fn dispatch() {
                     crate::agents::focus(&wait.target);
                 }
             }
-            Some(Action::Result(target)) => crate::agents::focus(&target),
             None => {}
         }
     }

@@ -1195,8 +1195,6 @@
   "assistant.news": "خبرها",
   "assistant.news_unread": "خبرها {n}",
   "assistant.agent_wait": "در انتظار ورودی",
-  "assistant.agent_done": "انجام شد",
-  "assistant.agent_failed": "ناموفق",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

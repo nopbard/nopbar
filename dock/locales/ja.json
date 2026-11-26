@@ -1195,8 +1195,6 @@
   "assistant.news": "お知らせ",
   "assistant.news_unread": "お知らせ {n}",
   "assistant.agent_wait": "入力待ち",
-  "assistant.agent_done": "完了",
-  "assistant.agent_failed": "失敗",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

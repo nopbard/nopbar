@@ -1195,8 +1195,6 @@
   "assistant.news": "ख़बरें",
   "assistant.news_unread": "ख़बरें {n}",
   "assistant.agent_wait": "इनपुट का इंतज़ार",
-  "assistant.agent_done": "पूरा हुआ",
-  "assistant.agent_failed": "विफल",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

@@ -1195,8 +1195,6 @@
   "assistant.news": "Nyheter",
   "assistant.news_unread": "Nyheter {n}",
   "assistant.agent_wait": "Venter på inndata",
-  "assistant.agent_done": "Ferdig",
-  "assistant.agent_failed": "Mislyktes",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

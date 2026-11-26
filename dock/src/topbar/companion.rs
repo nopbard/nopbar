@@ -45,11 +45,20 @@ pub(super) fn click(bar: HWND, i: usize, right: bool, keyboard: bool) {
     }
 }
 
+/// The cell's width (DIPs).
+const CELL_W: f32 = 20.0;
+
 /// The same paint is used by the live surface and the offscreen audit.
-unsafe fn paint_cell(dc: &windows::Win32::Graphics::Direct2D::ID2D1DeviceContext, art: Picture, h: f32, ink: crate::theme::Rgba) -> Result<()> {
+/// The cell is CELL_W x `h` DIPs, drawn at `s` device px per DIP; `line`:
+/// high contrast (Picture::Mark is then the icon's outline in `ink`).
+unsafe fn paint_cell(dc: &windows::Win32::Graphics::Direct2D::ID2D1DeviceContext, art: Picture, h: f32, ink: crate::theme::Rgba, s: f32, line: bool) -> Result<()> {
     let color = D2D1_COLOR_F { r: ink.r as f32 / 255., g: ink.g as f32 / 255., b: ink.b as f32 / 255., a: 1. };
     match art {
-        Picture::Mark => crate::glyphs::draw(dc, Glyph::Mark, 10., h / 2., h, color)?,
+        Picture::Mark => {
+            if paint_own(dc, h, ink, s, line).is_err() {
+                crate::glyphs::draw(dc, Glyph::Mark, CELL_W / 2., h / 2., h, color)?;
+            }
+        }
         Picture::Home { notice } => {
             Painter::new().slot(dc, 10., h, h, 1.)?;
             if notice {
@@ -64,17 +73,44 @@ unsafe fn paint_cell(dc: &windows::Win32::Graphics::Direct2D::ID2D1DeviceContext
     Ok(())
 }
 
+/// NopBar's own tray picture (own_mark: the app icon, or with `line` its
+/// outline in `ink`) at the tray icons' size (TRAY_DIP, the cell's height
+/// at most), 1:1 on the device pixels and centered on the cell's.
+unsafe fn paint_own(dc: &windows::Win32::Graphics::Direct2D::ID2D1DeviceContext, h: f32, ink: crate::theme::Rgba, s: f32, line: bool) -> Result<()> {
+    use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U};
+    use windows::Win32::Graphics::Direct2D::{D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1, D2D1_INTERPOLATION_MODE_LINEAR};
+    use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
+    let fail = || windows::core::Error::from(windows::Win32::Foundation::E_FAIL);
+    let n = (TRAY_DIP.min(h) * s).round().max(1.0) as u32;
+    let pixels = own_mark(n, line).ok_or_else(fail)?;
+    let pixels = if line { tint_premultiplied(&pixels, ink) } else { pixels };
+    let props = D2D1_BITMAP_PROPERTIES1 {
+        pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
+        dpiX: 96. * s,
+        dpiY: 96. * s,
+        bitmapOptions: D2D1_BITMAP_OPTIONS_NONE,
+        colorContext: std::mem::ManuallyDrop::new(None),
+    };
+    let bmp = dc.CreateBitmap(D2D_SIZE_U { width: n, height: n }, Some(pixels.as_ptr() as *const _), n * 4, &props)?;
+    let side = n as f32 / s;
+    let left = ((CELL_W * s - n as f32) / 2.).round() / s;
+    let top = ((h * s - n as f32) / 2.).round() / s;
+    dc.DrawBitmap(&bmp, Some(&D2D_RECT_F { left, top, right: left + side, bottom: top + side }), 1., D2D1_INTERPOLATION_MODE_LINEAR, None, None);
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) unsafe fn paint_home(dc: &windows::Win32::Graphics::Direct2D::ID2D1DeviceContext, h: f32, ink: crate::theme::Rgba, notice: bool) -> Result<()> {
-    paint_cell(dc, Picture::Home { notice }, h, ink)
+    paint_cell(dc, Picture::Home { notice }, h, ink, 1., false)
 }
 
 impl TopBar {
     pub(super) fn companion_surface(&mut self) -> Option<(CompositionSurfaceBrush, f32, f32)> {
         let h = (self.height - 8.0).max(12.0);
-        let w = 20.0;
+        let w = CELL_W;
         let art = picture(self.companion_enabled, crate::companion::visible(), crate::companion::attention());
-        let key = (Style::Glyph, format!("companion|{art:?}"));
+        let line = self.theme.high_contrast;
+        let key = (Style::Glyph, format!("companion|{art:?}|{line}"));
         if let Some(s) = self.surfaces.get(&key) {
             return Some(s.clone());
         }
@@ -86,7 +122,7 @@ impl TopBar {
                 (h * s).ceil() as u32,
                 |dc, ox, oy| unsafe {
                     dc.SetTransform(&(scale(s, s) * translate(ox, oy)));
-                    paint_cell(dc, art, h, self.ground.ink)
+                    paint_cell(dc, art, h, self.ground.ink, s, line)
                 },
             )
             .ok()?;

@@ -1195,8 +1195,6 @@
   "assistant.news": "Berita",
   "assistant.news_unread": "Berita {n}",
   "assistant.agent_wait": "Menunggu input",
-  "assistant.agent_done": "Selesai",
-  "assistant.agent_failed": "Gagal",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

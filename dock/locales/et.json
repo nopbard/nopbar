@@ -1195,8 +1195,6 @@
   "assistant.news": "Uudised",
   "assistant.news_unread": "Uudised {n}",
   "assistant.agent_wait": "Ootab sisendit",
-  "assistant.agent_done": "Valmis",
-  "assistant.agent_failed": "Ebaõnnestus",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

@@ -80,8 +80,7 @@ use shell::*;
 pub use trayicon::{is_own as is_own_tray_icon, remove_stale as remove_stale_tray_icon, started as process_started,
     bar_click as own_tray_click, Gone as TrayIconGone,
 };
-#[cfg(test)]
-pub use trayicon::tray_png as own_tray_png;
+pub use trayicon::{tray_line_png as own_tray_line_png, tray_png as own_tray_png, tray_sides as own_tray_sides};
 use views::{IconShelf, ModelSnap, Seed};
 
 // ---- Look & feel (DIPs) ----------------------------------------------------

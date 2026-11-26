@@ -1195,8 +1195,6 @@
   "assistant.news": "খবর",
   "assistant.news_unread": "খবর {n}",
   "assistant.agent_wait": "ইনপুটের অপেক্ষায়",
-  "assistant.agent_done": "সম্পন্ন",
-  "assistant.agent_failed": "ব্যর্থ",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

@@ -1195,8 +1195,6 @@
   "assistant.news": "Tin mới",
   "assistant.news_unread": "Tin mới {n}",
   "assistant.agent_wait": "Đang chờ nhập",
-  "assistant.agent_done": "Hoàn tất",
-  "assistant.agent_failed": "Thất bại",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

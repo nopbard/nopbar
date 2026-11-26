@@ -1195,8 +1195,6 @@
   "assistant.news": "Noutăți",
   "assistant.news_unread": "Noutăți {n}",
   "assistant.agent_wait": "Așteaptă date",
-  "assistant.agent_done": "Finalizat",
-  "assistant.agent_failed": "Eșuat",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

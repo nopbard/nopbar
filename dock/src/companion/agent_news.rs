@@ -3,7 +3,7 @@ use super::{
     news::{self, Receipt},
 };
 use crate::{
-    agents::{Completion, Session, Wait},
+    agents::{Session, Wait},
     desklayer::card::Mark,
     i18n::t,
 };
@@ -74,21 +74,6 @@ pub(super) fn wait_card(session: &Session) -> Card {
     )
 }
 
-pub(super) fn result_card(completion: &Completion) -> Card {
-    let session = &completion.session;
-    let value = if session.failed {
-        t("assistant.agent_failed").into()
-    } else {
-        format!(
-            "{} · {}{}",
-            t("assistant.agent_done"),
-            completion.elapsed.as_secs() / 60,
-            t("timer.unit.min"),
-        )
-    };
-    agent_card(session, value, Route::AgentResult(session.target()))
-}
-
 fn agent_card(session: &Session, value: String, route: Route) -> Card {
     let mut line = Line::new(Mark::Agent(session.agent), session_label(session), route);
     line.value = value;
@@ -120,14 +105,6 @@ pub(super) fn poll(now: Instant) -> Option<u32> {
     });
     for (card, receipt) in cards {
         news::add(card, receipt);
-    }
-    for completion in crate::agents::take_completions() {
-        if !completion.session.foreground() {
-            news::add(
-                result_card(&completion),
-                Receipt::AgentResult(completion.session.since),
-            );
-        }
     }
     next
 }

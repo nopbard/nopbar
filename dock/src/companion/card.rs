@@ -28,7 +28,6 @@ pub enum Route {
     Snooze(String),
     News,
     AgentWait(crate::agents::Wait),
-    AgentResult(crate::agents::Target),
     Scroll(isize),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -673,7 +672,7 @@ pub(super) fn anchor_at(anchor: Anchor, light: bool, motion: bool) -> bool {
 pub fn dispatch() {
     let routes = CLICKS.with(|q| std::mem::take(&mut *q.borrow_mut()));
     for route in routes {
-        if !matches!(route, Route::Scroll(_) | Route::AgentWait(_) | Route::AgentResult(_)) { dismiss(); }
+        if !matches!(route, Route::Scroll(_) | Route::AgentWait(_)) { dismiss(); }
         match route {
             Route::Agenda(at) => crate::topbar::companion_agenda(at),
             Route::Notes(id) | Route::BriefingNote { id, .. } => {
@@ -695,10 +694,6 @@ pub fn dispatch() {
             Route::News => super::news::open(),
             Route::AgentWait(wait) => {
                 crate::agents::focus(&wait.target);
-                dismiss();
-            }
-            Route::AgentResult(target) => {
-                crate::agents::focus(&target);
                 dismiss();
             }
             Route::Scroll(delta) => VIEW.with(|v| {

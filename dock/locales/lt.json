@@ -1195,8 +1195,6 @@
   "assistant.news": "Naujienos",
   "assistant.news_unread": "Naujienos {n}",
   "assistant.agent_wait": "Laukiama įvesties",
-  "assistant.agent_done": "Atlikta",
-  "assistant.agent_failed": "Nepavyko",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

@@ -1195,8 +1195,6 @@
   "assistant.news": "Uutiset",
   "assistant.news_unread": "Uutiset {n}",
   "assistant.agent_wait": "Odottaa syötettä",
-  "assistant.agent_done": "Valmis",
-  "assistant.agent_failed": "Epäonnistui",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

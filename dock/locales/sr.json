@@ -1195,8 +1195,6 @@
   "assistant.news": "Вести",
   "assistant.news_unread": "Вести {n}",
   "assistant.agent_wait": "Чека унос",
-  "assistant.agent_done": "Завршено",
-  "assistant.agent_failed": "Неуспело",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

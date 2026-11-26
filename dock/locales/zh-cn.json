@@ -1195,8 +1195,6 @@
   "assistant.news": "消息",
   "assistant.news_unread": "消息 {n}",
   "assistant.agent_wait": "等待输入",
-  "assistant.agent_done": "已完成",
-  "assistant.agent_failed": "失败",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

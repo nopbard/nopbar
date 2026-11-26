@@ -1195,8 +1195,6 @@
   "assistant.news": "חדשות",
   "assistant.news_unread": "חדשות {n}",
   "assistant.agent_wait": "ממתין לקלט",
-  "assistant.agent_done": "הושלם",
-  "assistant.agent_failed": "נכשל",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

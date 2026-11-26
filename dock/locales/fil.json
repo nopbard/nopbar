@@ -1195,8 +1195,6 @@
   "assistant.news": "Balita",
   "assistant.news_unread": "Balita {n}",
   "assistant.agent_wait": "Naghihintay ng input",
-  "assistant.agent_done": "Tapos na",
-  "assistant.agent_failed": "Nabigo",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

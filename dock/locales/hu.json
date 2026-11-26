@@ -1195,8 +1195,6 @@
   "assistant.news": "Hírek",
   "assistant.news_unread": "Hírek {n}",
   "assistant.agent_wait": "Bevitelre vár",
-  "assistant.agent_done": "Kész",
-  "assistant.agent_failed": "Sikertelen",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

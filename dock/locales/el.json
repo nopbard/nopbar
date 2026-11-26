@@ -1195,8 +1195,6 @@
   "assistant.news": "Νέα",
   "assistant.news_unread": "Νέα {n}",
   "assistant.agent_wait": "Αναμονή εισόδου",
-  "assistant.agent_done": "Ολοκληρώθηκε",
-  "assistant.agent_failed": "Απέτυχε",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

@@ -4860,20 +4860,64 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     }
 }
 
-/// Pure: premultiplied BGRA pixels of a one-color picture redrawn in
-/// color `c` (its alpha ignored): each pixel's coverage (alpha) kept.
-/// NopBar's tray mark (assets/brand/tray, crate::dock::own_tray_png) for a
-/// `light` bar or a dark one, normalized to `px` a side like every tray
-/// icon the tray thread hands over (crate::tray::fit), premultiplied BGRA.
-/// None if it cannot be decoded.
-#[cfg(test)]
-fn own_mark(light: bool, px: u32) -> Option<Vec<u8>> {
-    let (_, png) = crate::dock::own_tray_png(light, px as i32);
-    let icon = crate::icons::decode_bytes_fit(png, 1024)?;
-    (icon.width == icon.height && icon.width > 0).then(|| crate::tray::fit::normalize(&icon.pixels, icon.width, px))
+/// NopBar's tray picture (assets/brand/tray: crate::dock::own_tray_png, the
+/// app icon in color, or with `line` its outline,
+/// crate::dock::own_tray_line_png) in a `px` square, premultiplied BGRA,
+/// filling the box every tray icon gets (crate::tray::fit: `px` less an
+/// inset on each side), by how big each hand-tuned size's picture is (its
+/// box; the color picture's, the outline being the same shape): one that
+/// fills the box within 2 px is placed 1:1, centered (sharp at 100, 125,
+/// 150, 200 and 250 %); else the smallest bigger one is shrunk into it like
+/// any tray icon (crate::tray::fit::normalize); with none that big, the
+/// largest is placed 1:1 (never blown up). Sizes that cannot be read are
+/// skipped; None if none can.
+fn own_mark(px: u32, line: bool) -> Option<Vec<u8>> {
+    use crate::tray::fit;
+    let room = (px as f32 - 2.0 * fit::inset_px(px)).max(1.0) as u32;
+    // (side, picture in this mode, the color picture's box, its longer side)
+    let sizes: Vec<_> = crate::dock::own_tray_sides()
+        .into_iter()
+        .filter_map(|side| {
+            let color = crate::icons::decode_bytes_fit(crate::dock::own_tray_png(side).1, 1024)?;
+            let b = fit::opaque_bbox(&color.pixels, color.width, color.height, fit::ALPHA_THRESHOLD)?;
+            let icon = if line { crate::icons::decode_bytes_fit(crate::dock::own_tray_line_png(side).1, 1024)? } else { color };
+            (icon.width == side as u32 && icon.height == side as u32).then_some((side as u32, icon.pixels, b, (b.2 - b.0).max(b.3 - b.1)))
+        })
+        .collect();
+    let exact = sizes.iter().rev().find(|s| s.3 <= room && room - s.3 <= 2);
+    let bigger = sizes.iter().find(|s| s.3 >= room);
+    match (exact, bigger, sizes.last()) {
+        (Some((n, pixels, b, _)), _, _) => Some(centered_1to1(pixels, *n, px, *b)),
+        (None, Some((n, pixels, _, _)), _) => Some(fit::normalize(pixels, *n, px)),
+        (None, None, Some((n, pixels, b, _))) => Some(centered_1to1(pixels, *n, px, *b)),
+        (None, None, None) => None,
+    }
 }
 
-#[cfg(test)]
+/// Pure: `src` (an `n` px square, premultiplied BGRA) copied unscaled into
+/// an `out` px square with its box `b` (x0, y0, x1, y1, end exclusive)
+/// centered (left / up by half a pixel when it cannot be exact); what
+/// falls outside is cut.
+fn centered_1to1(src: &[u8], n: u32, out: u32, b: (u32, u32, u32, u32)) -> Vec<u8> {
+    let dx = (out as i32 - (b.2 - b.0) as i32).div_euclid(2) - b.0 as i32;
+    let dy = (out as i32 - (b.3 - b.1) as i32).div_euclid(2) - b.1 as i32;
+    let mut px = vec![0u8; (out * out * 4) as usize];
+    for y in 0..n as i32 {
+        for x in 0..n as i32 {
+            let (tx, ty) = (x + dx, y + dy);
+            if tx < 0 || ty < 0 || tx >= out as i32 || ty >= out as i32 {
+                continue;
+            }
+            let s = ((y * n as i32 + x) * 4) as usize;
+            let d = ((ty * out as i32 + tx) * 4) as usize;
+            px[d..d + 4].copy_from_slice(&src[s..s + 4]);
+        }
+    }
+    px
+}
+
+/// Pure: premultiplied BGRA pixels of a one-color picture redrawn in
+/// color `c` (its alpha ignored): each pixel's coverage (alpha) kept.
 fn tint_premultiplied(pixels: &[u8], c: crate::theme::Rgba) -> Vec<u8> {
     let pre = |v: u8, a: u8| ((v as u32 * a as u32 + 127) / 255) as u8;
     pixels.chunks_exact(4).flat_map(|p| [pre(c.b, p[3]), pre(c.g, p[3]), pre(c.r, p[3]), p[3]]).collect()
@@ -5269,13 +5313,78 @@ mod tests {
     #[test]
     fn our_tray_mark_takes_the_bars_text_color() {
         let c = |r, g, b| crate::theme::Rgba { r, g, b, a: 255 };
-        // The black mark (made for a light taskbar) on a dark bar: white,
-        // its soft edge kept (premultiplied).
+        // The black outline (high contrast) on a dark bar: white, its soft
+        // edge kept (premultiplied).
         let black = [0, 0, 0, 255, 0, 0, 0, 128, 0, 0, 0, 0];
         assert_eq!(tint_premultiplied(&black, c(255, 255, 255)), vec![255, 255, 255, 255, 128, 128, 128, 128, 0, 0, 0, 0]);
-        // The white mark on a light bar: the bar's ink.
+        // A white picture on a light bar: the bar's ink.
         let white = [255, 255, 255, 255];
         assert_eq!(tint_premultiplied(&white, c(0x27, 0x31, 0x3B)), vec![0x3B, 0x31, 0x27, 255]);
+    }
+
+    #[test]
+    fn a_picture_placed_one_to_one_keeps_its_pixels_centered() {
+        // A 4 px square holding a 2 x 1 box at (1, 2): into 6 px, the box
+        // lands at (2, 2) (centered), each pixel unchanged.
+        let mut src = vec![0u8; 4 * 4 * 4];
+        for (x, y, v) in [(1usize, 2usize, 10u8), (2, 2, 20)] {
+            src[(y * 4 + x) * 4..][..4].copy_from_slice(&[v, v, v, 255]);
+        }
+        let out = centered_1to1(&src, 4, 6, (1, 2, 3, 3));
+        let at = |x: usize, y: usize| out[(y * 6 + x) * 4..][..4].to_vec();
+        assert_eq!((at(2, 2), at(3, 2)), (vec![10, 10, 10, 255], vec![20, 20, 20, 255]));
+        assert_eq!(out.as_chunks::<4>().0.iter().filter(|p| p[3] != 0).count(), 2);
+        // Bigger than the square: cut, never out of bounds.
+        assert_eq!(centered_1to1(&src, 4, 2, (0, 0, 4, 4)).len(), 2 * 2 * 4);
+    }
+
+    #[test]
+    fn our_bar_picture_is_sharp_at_the_common_scales() {
+        // At 100, 125, 150, 200 and 250 % the bar's tray box (TRAY_DIP less
+        // the inset) matches a hand-tuned size: its pixels, unscaled, every
+        // byte, its box centered in the square (within half a pixel).
+        use crate::tray::fit::{opaque_bbox, ALPHA_THRESHOLD};
+        let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED) };
+        let centered = |b: (u32, u32, u32, u32), px: u32, what: &str| {
+            assert!((b.0 as i32 - (px - b.2) as i32).abs() <= 1, "{what}: across {b:?} in {px}");
+            assert!((b.1 as i32 - (px - b.3) as i32).abs() <= 1, "{what}: down {b:?} in {px}");
+        };
+        for (scale, side) in [(1.0f32, 16u32), (1.25, 20), (1.5, 24), (2.0, 32), (2.5, 40)] {
+            let px = (TRAY_DIP * scale).round() as u32;
+            for line in [false, true] {
+                let what = format!("{scale} line {line}");
+                let got = own_mark(px, line).expect("decodes");
+                let png = if line { crate::dock::own_tray_line_png(side as i32) } else { crate::dock::own_tray_png(side as i32) };
+                let src = crate::icons::decode_bytes_fit(png.1, 1024).unwrap();
+                assert_eq!((src.width, src.height), (side, side));
+                let color = crate::icons::decode_bytes_fit(crate::dock::own_tray_png(side as i32).1, 1024).unwrap();
+                let sb = opaque_bbox(&color.pixels, side, side, ALPHA_THRESHOLD).unwrap();
+                // The color picture's box moved by (dx, dy): the source's
+                // pixels there, byte for byte, nothing anywhere else.
+                let dx = (px as i32 - (sb.2 - sb.0) as i32).div_euclid(2) - sb.0 as i32;
+                let dy = (px as i32 - (sb.3 - sb.1) as i32).div_euclid(2) - sb.1 as i32;
+                for y in 0..px as i32 {
+                    for x in 0..px as i32 {
+                        let (sx, sy) = (x - dx, y - dy);
+                        let want: &[u8] = if (0..side as i32).contains(&sx) && (0..side as i32).contains(&sy) {
+                            &src.pixels[((sy * side as i32 + sx) * 4) as usize..][..4]
+                        } else {
+                            &[0, 0, 0, 0]
+                        };
+                        assert_eq!(&got[((y * px as i32 + x) * 4) as usize..][..4], want, "{what}: at {x}, {y}");
+                    }
+                }
+                if !line {
+                    centered(opaque_bbox(&got, px, px, ALPHA_THRESHOLD).unwrap(), px, &what);
+                }
+            }
+        }
+        // In between (175 %): shrunk to fill the box, centered.
+        let px = (TRAY_DIP * 1.75).round() as u32;
+        let room = px - 2 * crate::tray::fit::inset_px(px) as u32;
+        let b = opaque_bbox(&own_mark(px, false).expect("decodes"), px, px, ALPHA_THRESHOLD).unwrap();
+        assert!((room - 1..=room).contains(&(b.2 - b.0).max(b.3 - b.1)), "175: {b:?} in {room}");
+        centered(b, px, "175");
     }
 
     #[test]

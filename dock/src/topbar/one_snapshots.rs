@@ -54,7 +54,7 @@ fn topbar_one_matrix() {
                     paint_battery(&cv.dc, 130., (h - BATTERY_H) / 2., &battery).unwrap();
                     let x = content_x(Cell::Companion, cell_x, cell_w, 20., false);
                     cv.dc.SetTransform(&(scale(dpi, dpi) * translate(x * dpi, 4. * dpi)));
-                    paint_cell(&cv.dc, art, h - 8., ground.ink).unwrap();
+                    paint_cell(&cv.dc, art, h - 8., ground.ink, dpi, hc).unwrap();
                     cv.dc.SetTransform(&scale(dpi, dpi));
                     let (text, _, th) = stage.gfx.text_layout_tabular("Nov 17 Mon 6:12 PM", &theme.font.family, theme.font.size, DWRITE_FONT_WEIGHT_NORMAL).unwrap();
                     let metrics = stage.gfx.font_metrics(&theme.font.family, DWRITE_FONT_WEIGHT_NORMAL)
@@ -73,9 +73,9 @@ fn topbar_one_matrix() {
         unsafe {
             cv.dc.Clear(Some(&kit::col(ground.tint)));
             cv.dc.SetTransform(&(scale(4., 4.) * translate(40., 32.)));
-            paint_cell(&cv.dc, Picture::Home { notice: true }, crate::config::TOPBAR_HEIGHT - 8., ground.ink).unwrap();
+            paint_cell(&cv.dc, Picture::Home { notice: true }, crate::config::TOPBAR_HEIGHT - 8., ground.ink, 4., hc).unwrap();
             cv.dc.SetTransform(&(scale(4., 4.) * translate(200., 32.)));
-            paint_cell(&cv.dc, Picture::Mark, crate::config::TOPBAR_HEIGHT - 8., ground.ink).unwrap();
+            paint_cell(&cv.dc, Picture::Mark, crate::config::TOPBAR_HEIGHT - 8., ground.ink, 4., hc).unwrap();
         }
         let (px, w, h) = cv.finish();
         kit::save_png(&px, w, h, &root.join(format!("{name}-detail.png")));

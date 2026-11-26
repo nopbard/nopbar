@@ -1195,8 +1195,6 @@
   "assistant.news": "Novosti",
   "assistant.news_unread": "Novosti {n}",
   "assistant.agent_wait": "Čeka unos",
-  "assistant.agent_done": "Dovršeno",
-  "assistant.agent_failed": "Neuspjelo",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

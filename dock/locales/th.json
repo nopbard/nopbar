@@ -1195,8 +1195,6 @@
   "assistant.news": "ข่าวสาร",
   "assistant.news_unread": "ข่าวสาร {n}",
   "assistant.agent_wait": "รอการป้อนข้อมูล",
-  "assistant.agent_done": "เสร็จสิ้น",
-  "assistant.agent_failed": "ล้มเหลว",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

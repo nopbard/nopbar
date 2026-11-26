@@ -772,9 +772,10 @@ fn zoomed(icon: &crate::icons::Icon, k: u32) -> crate::icons::Icon {
 #[test]
 #[ignore = "writes the design audit's pictures: cargo test -p dock harmony_ -- --ignored"]
 fn harmony_topbar_own_mark() {
-    // NopBar's own tray icon as a bar shows it (tray_surface: own_mark, or
-    // high contrast's one color, tint_premultiplied) at the tray sizes of
-    // 100 to 200 %, on a light bar and a dark one: 1:1, then 4 times.
+    // NopBar's own tray picture as the bar's gnome cell shows it (own_mark:
+    // the app icon, or in high contrast its outline in the ink,
+    // tint_premultiplied) at the tray sizes of 100 to 200 %, on a light
+    // bar and a dark one: 1:1, then 4 times.
     let stage = kit::stage();
     let _ = &stage;
     for (folder, light) in kit::LOOKS {
@@ -785,10 +786,11 @@ fn harmony_topbar_own_mark() {
         unsafe { cv.dc.Clear(Some(&col(back))) };
         let mut x = 12.0;
         for n in sizes {
-            let mark = own_mark(light, n).expect("the tray mark decodes");
-            let icon = crate::icons::Icon { width: n, height: n, pixels: mark.clone() };
+            let mark = own_mark(n, false).expect("the tray picture decodes");
+            let icon = crate::icons::Icon { width: n, height: n, pixels: mark };
             draw_px(&cv, &icon, x, 12.0);
-            let hc = crate::icons::Icon { width: n, height: n, pixels: tint_premultiplied(&mark, ink) };
+            let line = own_mark(n, true).expect("the outline decodes");
+            let hc = crate::icons::Icon { width: n, height: n, pixels: tint_premultiplied(&line, ink) };
             draw_px(&cv, &hc, x, 52.0);
             draw_px(&cv, &zoomed(&icon, 4), x, 96.0);
             x += (n * 4 + 12) as f32;

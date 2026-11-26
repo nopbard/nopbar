@@ -1195,8 +1195,6 @@
   "assistant.news": "Jaunumi",
   "assistant.news_unread": "Jaunumi {n}",
   "assistant.agent_wait": "Gaida ievadi",
-  "assistant.agent_done": "Pabeigts",
-  "assistant.agent_failed": "Neizdevās",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

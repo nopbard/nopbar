@@ -90,32 +90,48 @@ static ICON: AtomicIsize = AtomicIsize::new(0);
 static ICON_DPI: AtomicU32 = AtomicU32::new(0);
 static ICON_LOOK: AtomicU32 = AtomicU32::new(0);
 
-/// The gnome mark for the notification area (assets/brand/tray, made by
-/// scripts/brand-icons.py), by side in px: the brand's two colors (a brick
-/// hat; the beard light grey for a dark taskbar - "white" -, dark grey for
-/// a light one - "black").
-const TRAY_WHITE: [(i32, &[u8]); 6] = [
-    (16, include_bytes!("../../../assets/brand/tray/tray-white-16.png")),
-    (20, include_bytes!("../../../assets/brand/tray/tray-white-20.png")),
-    (24, include_bytes!("../../../assets/brand/tray/tray-white-24.png")),
-    (32, include_bytes!("../../../assets/brand/tray/tray-white-32.png")),
-    (40, include_bytes!("../../../assets/brand/tray/tray-white-40.png")),
-    (48, include_bytes!("../../../assets/brand/tray/tray-white-48.png")),
+/// The app icon (the gnome's face, assets/brand/icon.svg) for the
+/// notification area, by side in px: its hand-tuned small sizes, in color
+/// on a light taskbar and a dark one alike (its own outline keeps it apart
+/// from either).
+const TRAY: [(i32, &[u8]); 6] = [
+    (16, include_bytes!("../../../assets/brand/tray/tray-16.png")),
+    (20, include_bytes!("../../../assets/brand/tray/tray-20.png")),
+    (24, include_bytes!("../../../assets/brand/tray/tray-24.png")),
+    (32, include_bytes!("../../../assets/brand/tray/tray-32.png")),
+    (40, include_bytes!("../../../assets/brand/tray/tray-40.png")),
+    (48, include_bytes!("../../../assets/brand/tray/tray-48.png")),
 ];
-const TRAY_BLACK: [(i32, &[u8]); 6] = [
-    (16, include_bytes!("../../../assets/brand/tray/tray-black-16.png")),
-    (20, include_bytes!("../../../assets/brand/tray/tray-black-20.png")),
-    (24, include_bytes!("../../../assets/brand/tray/tray-black-24.png")),
-    (32, include_bytes!("../../../assets/brand/tray/tray-black-32.png")),
-    (40, include_bytes!("../../../assets/brand/tray/tray-black-40.png")),
-    (48, include_bytes!("../../../assets/brand/tray/tray-black-48.png")),
+/// The same pictures' outline alone (black, recolored when used): high
+/// contrast draws the icon in the scheme's text color.
+const TRAY_LINE: [(i32, &[u8]); 6] = [
+    (16, include_bytes!("../../../assets/brand/tray/tray-line-16.png")),
+    (20, include_bytes!("../../../assets/brand/tray/tray-line-20.png")),
+    (24, include_bytes!("../../../assets/brand/tray/tray-line-24.png")),
+    (32, include_bytes!("../../../assets/brand/tray/tray-line-32.png")),
+    (40, include_bytes!("../../../assets/brand/tray/tray-line-40.png")),
+    (48, include_bytes!("../../../assets/brand/tray/tray-line-48.png")),
 ];
 
-/// Pure: the picture for a `light` taskbar at `px` a side: the smallest
-/// one at least that big (drawn 1:1 at the usual DPIs), else the largest.
-pub fn tray_png(light: bool, px: i32) -> (i32, &'static [u8]) {
-    let set = if light { &TRAY_BLACK } else { &TRAY_WHITE };
+/// Pure: the smallest picture of `set` at least `px` a side (drawn 1:1 at
+/// the usual DPIs), else the largest.
+fn pick(set: &'static [(i32, &'static [u8]); 6], px: i32) -> (i32, &'static [u8]) {
     *set.iter().find(|(side, _)| *side >= px).unwrap_or(&set[set.len() - 1])
+}
+
+/// Pure: the icon in color at `px` a side (pick).
+pub fn tray_png(px: i32) -> (i32, &'static [u8]) {
+    pick(&TRAY, px)
+}
+
+/// Pure: the icon's outline at `px` a side (pick), for high contrast.
+pub fn tray_line_png(px: i32) -> (i32, &'static [u8]) {
+    pick(&TRAY_LINE, px)
+}
+
+/// Pure: the sides the tray pictures come in, smallest first.
+pub fn tray_sides() -> [i32; 6] {
+    TRAY.map(|(side, _)| side)
 }
 
 /// What the mark is drawn for: the taskbar it sits on (Windows mode,
@@ -903,12 +919,12 @@ fn icon_dpi() -> u32 {
     crate::monitors::primary().map(|m| m.dpi).filter(|&d| d > 0).unwrap_or(96)
 }
 
-/// The gnome mark at the small-icon size for the DPI (SM_CXSMICON for that
+/// The app icon at the small-icon size for the DPI (SM_CXSMICON for that
 /// DPI, which is what LoadIconMetric(LIM_SMALL) uses: LoadIconMetric lives
-/// only in comctl32 v6, which this exe does not bind to), white or black
-/// for the taskbar (tray_png), or in high contrast's text color. If that
-/// picture cannot be made: the exe's own icon (resource id 1,
-/// res/nopbar.rc).
+/// only in comctl32 v6, which this exe does not bind to): in color
+/// (tray_png), or its outline in high contrast's text color
+/// (tray_line_png). If that picture cannot be made: the exe's own icon
+/// (resource id 1, res/nopbar.rc).
 unsafe fn icon() -> HICON {
     let (dpi, look) = (icon_dpi(), mark_look());
     let old = ICON.load(Ordering::SeqCst);
@@ -916,19 +932,23 @@ unsafe fn icon() -> HICON {
         return HICON(old as *mut _);
     }
     let px = windows::Win32::UI::HiDpi::GetSystemMetricsForDpi(SM_CXSMICON, dpi).max(16);
-    let (_, png) = tray_png(look == MarkLook::Light, px);
+    let (_, png) = match look {
+        MarkLook::Contrast(_) => tray_line_png(px),
+        MarkLook::Light | MarkLook::Dark => tray_png(px),
+    };
     // PNG image data is a valid icon resource (version 3.0) since Vista.
     let made = CreateIconFromResourceEx(png, true, 0x0003_0000, px, px, LR_DEFAULTCOLOR).ok();
-    // High contrast: the white mark recolored (the white one if that fails).
-    let made = match (made, look) {
-        (Some(white), MarkLook::Contrast(rgb)) => match recolor(white, rgb) {
-            Some(h) => {
-                let _ = DestroyIcon(white);
-                Some(h)
-            }
-            None => Some(white),
-        },
-        (made, _) => made,
+    // High contrast: the outline recolored. If that cannot be made: the
+    // color picture (never the black outline, lost on a black taskbar).
+    let made = match look {
+        MarkLook::Contrast(rgb) => made
+            .and_then(|line| {
+                let h = recolor(line, rgb);
+                let _ = DestroyIcon(line);
+                h
+            })
+            .or_else(|| CreateIconFromResourceEx(tray_png(px).1, true, 0x0003_0000, px, px, LR_DEFAULTCOLOR).ok()),
+        MarkLook::Light | MarkLook::Dark => made,
     };
     let made = made.or_else(|| {
         let hinst = GetModuleHandleW(None).ok()?;
@@ -1245,20 +1265,50 @@ mod tests {
     }
 
     #[test]
-    fn tray_picture_follows_the_taskbar_and_the_size() {
-        // A dark taskbar gets the white mark, a light one the black.
-        assert_eq!(tray_png(false, 16).1, TRAY_WHITE[0].1);
-        assert_eq!(tray_png(true, 16).1, TRAY_BLACK[0].1);
+    fn tray_picture_follows_the_size() {
+        assert_eq!(tray_png(16).1, TRAY[0].1);
+        assert_eq!(tray_line_png(16).1, TRAY_LINE[0].1);
         // Each DPI's small-icon size has its own picture (96..288 DPI).
         for (px, want) in [(16, 16), (20, 20), (24, 24), (32, 32), (40, 40), (48, 48)] {
-            assert_eq!(tray_png(false, px).0, want);
+            assert_eq!(tray_png(px).0, want);
+            assert_eq!(tray_line_png(px).0, want);
         }
         // In between: the next one up; past the largest: the largest.
-        assert_eq!(tray_png(true, 18).0, 20);
-        assert_eq!(tray_png(true, 64).0, 48);
+        assert_eq!(tray_png(18).0, 20);
+        assert_eq!(tray_png(64).0, 48);
         // Real PNGs.
-        for (_, b) in TRAY_WHITE.iter().chain(TRAY_BLACK.iter()) {
+        for (_, b) in TRAY.iter().chain(TRAY_LINE.iter()) {
             assert_eq!(&b[..4], &[0x89, b'P', b'N', b'G']);
+        }
+    }
+
+    #[test]
+    fn tray_pictures_are_the_app_icon_and_its_outline() {
+        // Each side: the color picture is the app icon (its hat and beard
+        // colors there); the outline set has no pixel the color one leaves
+        // clear, is one color (black), and leaves the hat and the beard
+        // inside clear (an outline, not a filled silhouette).
+        let is = |p: &[u8; 4], (r, g, b): (u8, u8, u8)| {
+            p[3] == 255 && (p[2] as i32 - r as i32).abs() < 12 && (p[1] as i32 - g as i32).abs() < 12 && (p[0] as i32 - b as i32).abs() < 12
+        };
+        // WIC decodes; the test thread joins the process's MTA.
+        let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED) };
+        for ((n, png), (m, line)) in TRAY.iter().zip(TRAY_LINE.iter()) {
+            assert_eq!(n, m);
+            let color = crate::icons::decode_bytes_fit(png, 1024).expect("decodes");
+            let outline = crate::icons::decode_bytes_fit(line, 1024).expect("decodes");
+            assert_eq!((color.width, color.height, outline.width, outline.height), (*n as u32, *n as u32, *n as u32, *n as u32));
+            let pairs = || color.pixels.as_chunks::<4>().0.iter().zip(outline.pixels.as_chunks::<4>().0.iter());
+            for want in [(0xCE, 0x60, 0x52), (0xFD, 0xFD, 0xFC)] {
+                let inside: Vec<_> = pairs().filter(|(c, _)| is(c, want)).collect();
+                assert!(!inside.is_empty(), "{n}: {want:?}");
+                assert!(inside.iter().all(|(_, o)| o[3] < 64), "{n}: inside {want:?} is clear in the outline");
+            }
+            for (c, o) in pairs() {
+                assert!(o[3] <= c[3], "{n}: the outline stays inside the icon");
+                assert_eq!(&o[..3], &[0, 0, 0], "{n}: black");
+            }
+            assert!(outline.pixels.as_chunks::<4>().0.iter().filter(|p| p[3] >= 128).count() >= *n as usize * 2, "{n}: an outline, not nothing");
         }
     }
 
@@ -1540,13 +1590,13 @@ mod tests {
 
     #[test]
     fn the_recolored_mark_keeps_its_transparency_and_edges() {
-        // The real marks at every tray size, made into icons as the tray
+        // The real outlines at every tray size, made into icons as the tray
         // makes them, recolored as high contrast does, then drawn the way
         // icons are (DrawIconEx, on black and on white: tray::draw_icon)
         // and their alpha read back. Offscreen GDI only.
         let (r, g, b) = (0xFFu32, 0xC0u32, 0x40u32);
         let rgb = r << 16 | g << 8 | b;
-        for (px, png) in TRAY_WHITE {
+        for (px, png) in TRAY_LINE {
             unsafe {
                 let src = CreateIconFromResourceEx(png, true, 0x0003_0000, px, px, LR_DEFAULTCOLOR).unwrap();
                 let (src_bits, src_drawn) = (color_bits(src), crate::tray::draw_icon(src, px as u32).unwrap());
@@ -1574,7 +1624,7 @@ mod tests {
                         edges += (a < 255) as usize;
                     }
                 }
-                assert!(clear > 0, "{px}: the mark has a transparent background");
+                assert!(clear > 0, "{px}: the outline has a transparent background");
                 if px >= 20 {
                     assert!(edges > 0, "{px}: and soft edges");
                 }

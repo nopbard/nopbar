@@ -1488,7 +1488,6 @@ mod brand_review_tests {
             for style in [Style::Solid, Style::Frost, Style::Recipe] {
                 let g = ground(&t, style, Env::default(), &Wall::Pending);
                 assert_eq!(g.mark_light, light, "{style:?}");
-                assert_eq!(super::super::own_mark(g.mark_light, 20), super::super::own_mark(light, 20));
             }
             for wall_light in [false, true] {
                 let wall = Wall::Known(vec![Col::flat(if wall_light { 1.0 } else { 0.0 })]);

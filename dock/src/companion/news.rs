@@ -106,7 +106,6 @@ pub(super) enum Receipt {
     Reminder(Notice),
     Battery(String),
     AgentWait(crate::agents::Wait),
-    AgentResult(Instant),
 }
 
 impl Receipt {
@@ -126,7 +125,7 @@ impl Receipt {
             Self::Morning(date) => *date == today,
             Self::Wrap(date) => *date == day,
             Self::Download(time) => time.fresh(now),
-            Self::Reminder(_) | Self::Battery(_) | Self::AgentWait(_) | Self::AgentResult(_) => true,
+            Self::Reminder(_) | Self::Battery(_) | Self::AgentWait(_) => true,
         }
     }
 
@@ -136,7 +135,6 @@ impl Receipt {
 }
 
 const MAX_TOAST_ATTEMPTS: u32 = 8;
-const RESULT_GROUP_WINDOW: Duration = Duration::from_secs(2);
 
 struct Pending {
     id: u64,
@@ -149,30 +147,8 @@ struct Pending {
 }
 
 impl Pending {
-    fn result_target(&self) -> Option<&crate::agents::Target> {
-        match &self.card.lines.first()?.route {
-            Route::AgentResult(target) => Some(target),
-            _ => None,
-        }
-    }
-
-    fn group_ready_at(&self, now: Instant) -> Instant {
-        match self.receipt {
-            Receipt::AgentResult(at) if !self.deferred => at + RESULT_GROUP_WINDOW,
-            _ => now,
-        }
-    }
-
     fn ready_at(&self, now: Instant) -> Instant {
-        let due = self.group_ready_at(now);
-        self.retry.map_or(due, |retry| retry.max(due))
-    }
-
-    fn result_groups_with(&self, first: &Self) -> bool {
-        match (&self.receipt, &first.receipt) {
-            (Receipt::AgentResult(at), Receipt::AgentResult(start)) => *at >= *start && *at <= *start + RESULT_GROUP_WINDOW,
-            _ => false,
-        }
+        self.retry.map_or(now, |retry| retry.max(now))
     }
 
     fn record_toast_attempt(&mut self, now: Instant) {
@@ -197,7 +173,7 @@ impl History {
     }
 
     fn push(&mut self, id: u64, mut line: Line, at: i64, read: bool) {
-        if !matches!(line.route, Route::AgentWait(_) | Route::AgentResult(_)) {
+        if !matches!(line.route, Route::AgentWait(_)) {
             line.value = crate::topbar::panels::menu_time_local(at);
         }
         if self.entries.len() == 20 {
@@ -273,9 +249,6 @@ fn summary(card: &Card) -> Line {
 fn batch(items: &[&Pending]) -> (Card, Vec<u64>) {
     let morning = items.iter().find(|p| p.card.kind == Kind::Morning);
     let mut card = morning.map_or_else(|| news_card(Kind::Bundle), |p| p.card.clone());
-    if items.iter().all(|p| matches!(p.receipt, Receipt::AgentResult(_))) {
-        card.title.clear();
-    }
     let extra = items.iter().filter(|p| p.card.kind != Kind::Morning);
     let count = extra.clone().count();
     let mut shown: Vec<_> = morning.into_iter().map(|p| p.id).collect();
@@ -379,7 +352,7 @@ fn toast_payload(items: &[&Pending]) -> Option<ToastPayload> {
         .collect::<Vec<_>>()
         .join("\n");
     let title = if card.title.is_empty() { crate::i18n::t("assistant.news").into() } else { card.title.clone() };
-    if matches!(first.receipt, Receipt::AgentWait(_) | Receipt::AgentResult(_)) {
+    if matches!(first.receipt, Receipt::AgentWait(_)) {
         super::agent_toast::Toast::new(card, title, body).map(ToastPayload::Agent)
     } else {
         Some(ToastPayload::Text { title, body })
@@ -518,9 +491,7 @@ pub(super) fn poll(ctx: Context<'_>) -> Output {
         }
         news.history.roll(day);
         news.history.read(&card::take_read());
-        news.pending.retain(|p| {
-            p.receipt.valid(today, day, now) && p.result_target().is_none_or(crate::agents::show_result_for)
-        });
+        news.pending.retain(|p| p.receipt.valid(today, day, now));
         news.exhausted
             .retain(|receipt| receipt.valid(today, day, now));
         let mut done = news.poll_toast(local);
@@ -594,15 +565,13 @@ impl News {
                         .is_none_or(|flight| !flight.ids.contains(&p.id))
             })
         };
-        let Some(first) = available().find(|p| p.group_ready_at(now) <= now) else {
+        let Some(first) = available().next() else {
             return vec![];
         };
         if first.deferred || first.card.kind == Kind::Morning && available().any(|p| p.deferred) {
             available()
                 .filter(|p| p.deferred || p.card.kind == Kind::Morning)
                 .collect()
-        } else if matches!(first.receipt, Receipt::AgentResult(_)) {
-            available().filter(|p| !p.deferred && p.result_groups_with(first)).collect()
         } else if matches!(first.card.kind, Kind::Download | Kind::Reminder) {
             available()
                 .skip_while(|p| p.id != first.id)
@@ -947,7 +916,7 @@ impl News {
                 return true;
             }
             self.history.push(p.id, summary(&p.card), local, false);
-            if !matches!(p.receipt, Receipt::Download(_) | Receipt::AgentResult(_)) {
+            if !matches!(p.receipt, Receipt::Download(_)) {
                 self.exhausted.push(p.receipt.clone());
             }
             false
@@ -995,8 +964,6 @@ impl News {
                 .filter(|p| matches!(&p.receipt, Receipt::Reminder(n) if n.startup_missed))
                 .take(128)
                 .collect()
-        } else if matches!(first.receipt, Receipt::AgentResult(_)) {
-            available().filter(|p| p.result_groups_with(first)).collect()
         } else {
             vec![first]
         }
@@ -1063,7 +1030,7 @@ fn acknowledge(receipt: Receipt, carries: Vec<(String, i64)>) {
         }),
         Receipt::Reminder(notice) => crate::notes::runtime::action(Action::Delivered(notice)),
         Receipt::Battery(id) => super::device_battery::delivered(id),
-        Receipt::Download(_) | Receipt::AgentWait(_) | Receipt::AgentResult(_) => {}
+        Receipt::Download(_) | Receipt::AgentWait(_) => {}
     }
 }
 
@@ -1090,31 +1057,6 @@ mod tests {
             assert!(matches!(news.select_delivery(route, now, true, || false, || None), Delivery::Toast));
             assert!(matches!(toast_payload(&news.toast_batch(now, true)), Some(ToastPayload::Agent(_))));
         }
-    }
-
-    #[test]
-    fn completed_sessions_share_one_card_and_keep_hidden_rows_unread() {
-        let now = Instant::now();
-        let due = now + RESULT_GROUP_WINDOW;
-        let mut news = News::default();
-        for n in 0..7 {
-            let at = now + Duration::from_millis(n);
-            let session = crate::agents::test_session(crate::agents::Agent::Codex, "project", crate::agents::St::Done, at, false);
-            let mut card = news_card(Kind::Agent);
-            card.lines.push(Line::new(Mark::Agent(session.agent), format!("Project {n}"), Route::AgentResult(session.target())));
-            news.pending.push_back(pending(n, card, Receipt::AgentResult(at), false));
-        }
-        assert!(news.next_batch(true, now).is_empty());
-        assert_eq!(news.toast_batch(due, true).len(), 7);
-        let shown = news.show_pending(true, 0, due, |card| {
-            assert_eq!(card.lines.len(), 6);
-            assert!(card.lines[..5].iter().all(|row| matches!(row.route, Route::AgentResult(_))));
-            assert_eq!(card.lines[5].label, "+2");
-            assert!(matches!(card.lines[5].route, Route::News));
-            true
-        }).unwrap();
-        news.history.read(&shown.read_ids);
-        assert_eq!(news.history.unread(), 2);
     }
 
     #[test]

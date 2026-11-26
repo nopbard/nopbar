@@ -270,32 +270,13 @@ fn gnome_a_render_matrix() {
 #[test]
 #[ignore = "fixture backdrops and offscreen production painters"]
 fn gnome_b_render_matrix_news() {
-    use crate::agents::{Agent, Completion, St, test_session};
-    use crate::companion::agent_news::{result_card, wait_card};
+    use crate::agents::{Agent, St, test_session};
+    use crate::companion::agent_news::wait_card;
     let _language = crate::i18n::test_lock("ko");
     let root = PathBuf::from(std::env::var_os("NOPBAR_GNOME_RENDER_DIR").expect("render output directory"));
     let now = Instant::now();
     let waiting = test_session(Agent::Codex, "project", St::Wait, now, false);
-    let completion = |agent, name, minutes: u64, failed| {
-        let mut session = test_session(agent, name, St::Done, now, false);
-        session.failed = failed;
-        result_card(&Completion { session, elapsed: Duration::from_secs(minutes * 60) })
-    };
-    let done = completion(Agent::Codex, "project", 12, false);
-    let failed = completion(Agent::Claude, "sample", 4, true);
-    let pending: Vec<_> = [
-        done.clone(), failed.clone(),
-        completion(Agent::Claude, "docs", 3, false),
-        completion(Agent::Codex, "tests", 5, false),
-        completion(Agent::Claude, "examples", 8, false),
-        completion(Agent::Codex, "tools", 2, false),
-        completion(Agent::Claude, "build", 11, false),
-    ].into_iter().enumerate().map(|(id, card)| Pending {
-        id: id as u64, card, receipt: Receipt::AgentResult(now),
-        deferred: false, during_absence: false, attempts: 0, retry: None,
-    }).collect();
-    let bundle = batch(&pending.iter().collect::<Vec<_>>()).0;
-    let cards = [("waiting", wait_card(&waiting)), ("done", done), ("failed", failed), ("bundle", bundle)];
+    let cards = [("waiting", wait_card(&waiting))];
     let stage = kit::stage();
     let mut rows = vec![convenience::news_item(2)];
     rows.extend(convenience::waiting_items(std::slice::from_ref(&waiting)));
