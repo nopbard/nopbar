@@ -34,7 +34,6 @@ pub enum Action {
     Snooze(String),
     Tomorrow(Vec<String>),
     BriefingShown(Vec<(String, i64)>),
-    Missed(Vec<String>),
     Delivered(super::reminders::Notice),
     Reveal(String),
 }
@@ -277,12 +276,6 @@ pub fn tick() {
                         r.pending.remove(id);
                     }
                 }
-                Action::Missed(ids) => {
-                    for row in r.store.data.rows.iter_mut().filter(|r| ids.contains(&r.id)) {
-                        changed |= !row.missed;
-                        row.missed = true;
-                    }
-                }
                 Action::Complete(id) | Action::Snooze(id) => {
                     if let Some(row) = r.store.data.rows.iter_mut().find(|x| &x.id == id) {
                         match &a {
@@ -295,6 +288,7 @@ pub fn tick() {
                             Action::Snooze(_) => {
                                 row.snooze(now);
                                 r.pending.remove(&row.id);
+                                crate::companion::remind::cancel(&row.id);
                             }
                             _ => {}
                         }
@@ -303,20 +297,21 @@ pub fn tick() {
                 }
             }
         }
-        if super::preferences().notes_reminders {
+        let prefs = super::preferences();
+        if prefs.notes && prefs.notes_reminders {
             if r.startup {
                 let ids = super::reminders::missed_at_start(&r.store.data.rows, now);
                 r.pending.extend(ids.iter().cloned());
                 r.startup = false;
-                if !ids.is_empty() {
-                    crate::companion::remind::enqueue_notice(super::reminders::Notice::summary(
-                        ids, true,
-                    ));
-                }
+                crate::companion::remind::enqueue_all(
+                    r.store.data.rows.iter().filter(|row| ids.contains(&row.id)).map(|row|
+                        super::reminders::Notice::at_start(row.id.clone(), super::reminders::message(row, now)),
+                    ),
+                );
             }
             for id in super::reminders::unqueued(&r.store.data.rows, now, &mut r.pending) {
                 if let Some(row) = r.store.data.rows.iter().find(|r| r.id == id) {
-                    crate::companion::remind::enqueue(id, super::reminders::message(row, now));
+                    crate::companion::remind::enqueue(super::reminders::Notice::single(id, super::reminders::message(row, now)));
                 }
             }
         }
@@ -350,7 +345,6 @@ pub fn tick() {
         super::hub::reveal(id.as_deref());
         layer(true);
     }
-    crate::companion::refresh();
 }
 impl Runtime {
     fn active_editor(&mut self) -> &mut Editor {
@@ -623,7 +617,12 @@ impl Runtime {
         (all.iter().skip(offset).take(count).copied().collect(),folded,all.len().saturating_sub(offset+count))
     }
     unsafe fn draw_inbox(&mut self) -> windows::core::Result<()> {
-        *ASSISTANT.lock().unwrap_or_else(|e|e.into_inner())=Some(self.store.data.rows.clone());
+        let mut snapshot = ASSISTANT.lock().unwrap_or_else(|e| e.into_inner());
+        if snapshot.as_ref() != Some(&self.store.data.rows) {
+            *snapshot = Some(self.store.data.rows.clone());
+            crate::companion::refresh();
+        }
+        drop(snapshot);
         if self.inbox.as_ref().is_some_and(|i|crate::desklayer::edit::dragging(i.hwnd)||i.lifted.get()){return Ok(());}
         if !super::preferences().inbox {if let Some(i)=&self.inbox{i.hide();}return Ok(());}
         let (v, _, _) = self.indices();

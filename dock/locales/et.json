@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "Seadmete aku.",
   "widgets.device_battery_alerts.hint": "Teavitus, kui akut on 20% või vähem",
   "widgets.add": "Lisa vidinaid",
+  "assistant.news": "Uudised",
+  "assistant.news_unread": "Uudised {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

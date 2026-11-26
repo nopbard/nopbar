@@ -1259,6 +1259,8 @@
   "widgets.device_battery.hint": "무선 기기 배터리 표시.",
   "widgets.device_battery_alerts.hint": "배터리 20% 이하 알림",
   "widgets.add": "위젯 추가",
+  "assistant.news": "소식",
+  "assistant.news_unread": "소식 {n}",
   "assistant.morning": "오늘",
   "assistant.agenda": "일정",
   "assistant.reminders": "메모 알림",

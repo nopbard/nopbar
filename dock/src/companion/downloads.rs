@@ -248,13 +248,66 @@ pub fn in_front(root: &Path, files: &[PathBuf], folders: &[PathBuf], title: &str
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static TIMER: AtomicBool = AtomicBool::new(false);
 const MAX_NOTICE_AGE: Duration = Duration::from_secs(10 * 60);
+struct Absence {
+    started: Instant,
+    returned: OnceLock<Instant>,
+}
+static ABSENCE: Mutex<Option<std::sync::Arc<Absence>>> = Mutex::new(None);
+
+pub(super) fn presence_changed(away: bool, now: Instant) {
+    let mut state = ABSENCE.lock().unwrap_or_else(|e| e.into_inner());
+    if away {
+        state.get_or_insert_with(|| std::sync::Arc::new(Absence { started: now, returned: OnceLock::new() }));
+    } else if let Some(absence) = state.take() {
+        let _ = absence.returned.set(now);
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct NoticeTime {
+    completed: Instant,
+    absence: Option<std::sync::Arc<Absence>>,
+}
+
+impl NoticeTime {
+    fn completed(at: Instant) -> Self {
+        Self {
+            completed: at,
+            absence: ABSENCE.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn present(at: Instant) -> Self {
+        Self { completed: at, absence: None }
+    }
+
+    pub(super) fn fresh(&self, now: Instant) -> bool {
+        let since = match &self.absence {
+            Some(absence) => absence.returned.get().copied(),
+            None => Some(self.completed),
+        };
+        since.is_none_or(|since| now.saturating_duration_since(since) < MAX_NOTICE_AGE)
+    }
+
+    pub(super) fn away(&self) -> bool {
+        self.absence.as_ref().is_some_and(|absence| absence.returned.get().is_none())
+    }
+
+    pub(super) fn long_return(&self) -> bool {
+        self.absence.as_ref().is_some_and(|absence| {
+            absence.returned.get().is_some_and(|at| at.saturating_duration_since(absence.started) > Duration::from_secs(7200))
+        })
+    }
+}
+
 struct Queued<T> {
     item: T,
-    completed: Instant,
+    time: NoticeTime,
 }
 impl<T> Queued<T> {
     fn fresh(&self, now: Instant) -> bool {
-        now.saturating_duration_since(self.completed) < MAX_NOTICE_AGE
+        self.time.fresh(now)
     }
 }
 static READY: Mutex<Vec<Queued<PathBuf>>> = Mutex::new(Vec::new());
@@ -311,7 +364,7 @@ fn queue() -> &'static crate::idle::IdleQueue<Job> {
                             let bytes = file_size(&file.item)?;
                             Some(Queued {
                                 item: Download { bytes: Some(bytes), path: file.item },
-                                completed: file.completed,
+                                time: file.time,
                             })
                         }).collect();
                         let mut out = APPROVED.lock().unwrap_or_else(|e| e.into_inner());
@@ -332,7 +385,7 @@ fn queue() -> &'static crate::idle::IdleQueue<Job> {
                         out.retain(|file| file.fresh(now));
                         for path in ready {
                             if out.len() < 256 && !out.iter().any(|f| f.item == path) {
-                                out.push(Queued { item: path, completed: now });
+                                out.push(Queued { item: path, time: NoticeTime::completed(now) });
                             }
                         }
                     }
@@ -377,7 +430,7 @@ fn native_unseen(root: &Path, files: Vec<Queued<PathBuf>>, now: Instant) -> Vec<
         let title = String::from_utf16_lossy(&title[..n.max(0) as usize]);
         files
             .into_iter()
-            .filter(|file| file.fresh(now) && !in_front(root, std::slice::from_ref(&file.item), &folders, &title))
+            .filter(|file| file.fresh(now) && (file.time.absence.is_some() || !in_front(root, std::slice::from_ref(&file.item), &folders, &title)))
             .collect()
     }
 }
@@ -394,6 +447,7 @@ pub fn configure(enabled: bool) {
     #[cfg(test)]
     let root = None;
     if !enabled {
+        super::news::retain(|receipt| !matches!(receipt, super::news::Receipt::Download(_)));
         READY.lock().unwrap_or_else(|e| e.into_inner()).clear();
         APPROVED.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
@@ -450,57 +504,31 @@ pub unsafe fn shell_event(
         let _ = queue().send(Job::Event(path, rename || create, previous));
     }
 }
-pub fn poll() {
-    if !ENABLED.load(Ordering::SeqCst) || super::card::active() || super::chat::busy() {
-        return;
-    }
-    if READY.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
-        && APPROVED
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty()
-    {
-        return;
-    }
-    if super::remind::delivery() != crate::notes::reminders::Delivery::Bubble {
-        return;
+/// Returns true while a ready download still needs filesystem verification.
+pub fn poll() -> bool {
+    if !ENABLED.load(Ordering::SeqCst) {
+        return false;
     }
     let now = Instant::now();
-    let files: Vec<_> = std::mem::take(&mut *APPROVED.lock().unwrap_or_else(|e| e.into_inner()))
-        .into_iter()
-        .filter(|file| file.fresh(now))
-        .map(|file| file.item)
-        .collect();
-    if files.is_empty() {
-        if VERIFY.load(Ordering::SeqCst) {
-            return;
+    let files = std::mem::take(&mut *APPROVED.lock().unwrap_or_else(|e| e.into_inner()));
+    for file in files.into_iter().filter(|file| file.fresh(now)) {
+        if let Some(card) = card(std::slice::from_ref(&file.item)) {
+            super::news::add(card, super::news::Receipt::Download(file.time));
         }
-        let mut pending = READY.lock().unwrap_or_else(|e| e.into_inner());
-        pending.retain(|file| file.fresh(now));
-        let pending = std::mem::take(&mut *pending);
-        if !pending.is_empty() {
-            VERIFY.store(true, Ordering::SeqCst);
-            if queue().send(Job::Present(pending)).is_err() {
-                VERIFY.store(false, Ordering::SeqCst);
-            }
-        }
-        return;
     }
-    let Some(card) = card(&files) else {
-        return;
-    };
-    super::APP.with(|a| {
-        let mut a = a.borrow_mut();
-        if let Some(a) = a.as_mut() {
-            if super::card::show(&a.gfx, card) {
-                a.model.landed(Instant::now());
-                a.purpose.notice(false);
-                if a.peek_home().is_some() {
-                    a.peek.notify(a.start.elapsed().as_secs_f64());
-                }
-            }
-        }
-    });
+    if VERIFY.load(Ordering::SeqCst) {
+        return true;
+    }
+    let mut ready = READY.lock().unwrap_or_else(|e| e.into_inner());
+    ready.retain(|file| file.fresh(now));
+    let ready = std::mem::take(&mut *ready);
+    if ready.is_empty() {
+        return false;
+    }
+    VERIFY.store(true, Ordering::SeqCst);
+    let sent = queue().send(Job::Present(ready)).is_ok();
+    if !sent { VERIFY.store(false, Ordering::SeqCst); }
+    sent
 }
 #[cfg(test)]
 mod tests {
@@ -508,10 +536,28 @@ mod tests {
     #[test]
     fn queued_notice_expires_at_ten_minutes() {
         let now = Instant::now();
-        let file = Queued { item: (), completed: now };
+        let file = Queued { item: (), time: NoticeTime::present(now) };
         assert!(file.fresh(now + MAX_NOTICE_AGE - Duration::from_millis(1)));
         assert!(!file.fresh(now + MAX_NOTICE_AGE));
     }
+    #[test]
+    fn a_download_keeps_its_return_deadline_through_verification() {
+        let left = Instant::now();
+        let completed = left + Duration::from_secs(300);
+        let returned = left + Duration::from_secs(10800);
+        let absence = std::sync::Arc::new(Absence { started: left, returned: OnceLock::new() });
+        let time = NoticeTime { completed, absence: Some(absence.clone()) };
+        let verified = time.clone();
+        assert!(time.away());
+        assert!(time.fresh(returned));
+        assert!(absence.returned.set(returned).is_ok());
+        assert!(!verified.away());
+        assert!(verified.long_return());
+        assert!(verified.fresh(returned + MAX_NOTICE_AGE - Duration::from_millis(1)));
+        assert!(!verified.fresh(returned + MAX_NOTICE_AGE));
+        assert!(!NoticeTime::present(completed).fresh(returned));
+    }
+
     #[test]
     fn review_ads_retry_is_bounded_and_update_does_not_restart_deadline() {
         let mut t = Tracker::new(Some("X:/fixture".into()));

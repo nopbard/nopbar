@@ -1259,6 +1259,8 @@
   "widgets.device_battery.hint": "Wireless device battery display.",
   "widgets.device_battery_alerts.hint": "Notification at 20% battery or lower",
   "widgets.add": "Add widgets",
+  "assistant.news": "News",
+  "assistant.news_unread": "News {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

@@ -2,11 +2,6 @@
 fn before_tests(source: &str) -> &str { source.split("#[cfg(test)]").next().unwrap() }
 
 #[test]
-fn review_fix_1_quiet_must_not_gate_toast() {
-    let s = before_tests(include_str!("companion/remind.rs"));
-    assert!(!s.replace("\r\n", "\n").contains("if delivery == Delivery::Defer {\n        retry();\n        return;"));
-}
-#[test]
 fn review_fix_2_session_end_restores_dnd_and_lease_is_durable() {
     let s = include_str!("dock/mod.rs");
     for marker in ["WM_QUERYENDSESSION =>", "WM_ENDSESSION =>"] {
@@ -16,9 +11,7 @@ fn review_fix_2_session_end_restores_dnd_and_lease_is_durable() {
     assert!(before_tests(include_str!("focus_timer/dnd.rs")).contains("focus_dnd_lease.json"));
 }
 #[test]
-fn review_fix_3_toast_failure_must_not_gate_bubble_or_register_again() {
-    let s = before_tests(include_str!("companion/remind.rs"));
-    assert!(!s.contains("if delivered && delivery == Delivery::Bubble"));
+fn review_fix_3_reminder_toast_does_not_register_protocol_again() {
     let s = before_tests(include_str!("notes/toast.rs"));
     let show = s.split("pub fn show(").nth(1).unwrap();
     assert!(!show.contains("register_protocol("));

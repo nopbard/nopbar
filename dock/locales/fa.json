@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "باتری دستگاه‌ها.",
   "widgets.device_battery_alerts.hint": "اعلان در سطح باتری ۲۰٪ یا کمتر",
   "widgets.add": "افزودن ابزارک‌ها",
+  "assistant.news": "خبرها",
+  "assistant.news_unread": "خبرها {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

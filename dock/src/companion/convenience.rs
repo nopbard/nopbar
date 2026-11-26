@@ -152,10 +152,21 @@ pub fn bar_items() -> Vec<Item> {
         let key = match action { super::cues::Click::CancelShutdown(_) => "topbar.system.schedule.cancel", super::cues::Click::Agenda(_) => "companion.next_event" };
         rows.insert(0, Item::new(2, crate::i18n::t(key)));
     }
+    rows.insert(0, news_item(super::news::unread()));
     rows
 }
+pub(super) fn news_item(unread: usize) -> Item {
+    let label = if unread == 0 {
+        crate::i18n::t("assistant.news").into()
+    } else {
+        crate::i18n::t("assistant.news_unread").replace("{n}", &unread.to_string())
+    };
+    Item::new(3, label)
+}
+
 pub fn bar_picked(id: u32) {
-    if id == 2 { if let Some(action) = MENU_PRIORITY.with(|p| p.borrow_mut().take()) { super::slot_click_with(action); } }
+    if id == 3 { super::news::open(); }
+    else if id == 2 { if let Some(action) = MENU_PRIORITY.with(|p| p.borrow_mut().take()) { super::slot_click_with(action); } }
     else if id == 1 {
         let visible = APP.with(|a| a.borrow().as_ref().is_some_and(|a| a.cfg.visible));
         request(if visible { Action::Hide } else { Action::Wake });

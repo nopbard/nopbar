@@ -100,26 +100,25 @@ pub fn morning(data: Morning, now: i64, agenda_at: i64) -> Option<Card> {
     })
 }
 
-pub fn poll() {
-    super::card::dispatch();
-    if super::card::active() || super::chat::busy() {
-        return;
-    }
+/// Returns true while a due briefing still needs data.
+pub fn poll() -> bool {
     let calendar = super::living::local_calendar();
+    let receipt = super::news::Receipt::Morning(calendar.date);
     let due = super::APP.with(|a| {
         a.borrow().as_ref().is_some_and(|a| {
-            a.cfg.morning_briefing
+            let state = a.news_body.map_or(super::State::Idle, |_| a.model.state);
+            a.cfg.enabled && a.cfg.morning_briefing
                 && a.purpose.using()
                 && a.cfg.routine.empty_briefing != Some(calendar.date)
-                && a.rhythm.morning_due(calendar, a.cfg.last_greet, Some(a.model.state))
+                && a.rhythm.morning_due(calendar, a.cfg.last_greet, Some(state))
         })
     });
-    if !due || super::remind::delivery() != crate::notes::reminders::Delivery::Bubble {
-        return;
+    if !due || super::news::waiting(&receipt) {
+        return false;
     }
     let notes = if crate::notes::preferences().notes {
         let Some(rows) = crate::notes::runtime::assistant_snapshot() else {
-            return;
+            return true;
         };
         rows
     } else {
@@ -131,7 +130,7 @@ pub fn poll() {
         .as_secs() as i64;
     let agenda = crate::agenda::Snapshot::read(crate::agenda::companion_day(unix));
     if agenda.enabled && agenda.loading {
-        return;
+        return true;
     }
     let events = (agenda.enabled && agenda.has_source).then(|| {
         agenda
@@ -159,7 +158,6 @@ pub fn poll() {
         notes,
         batteries: crate::device_battery::runtime::assistant_snapshot(),
     };
-    let now = std::time::Instant::now();
     let Some(card) = morning(data, crate::notes::time::now(), unix) else {
         super::APP.with(|a| {
             if let Some(a) = a.borrow_mut().as_mut() {
@@ -167,21 +165,10 @@ pub fn poll() {
                 a.cfg.routine.dirty = true;
             }
         });
-        return;
+        return false;
     };
-    super::APP.with(|a| {
-        let mut a = a.borrow_mut();
-        let Some(a) = a.as_mut() else {
-            return;
-        };
-        if super::card::show(&a.gfx, card) {
-            a.model.landed(now);
-            a.purpose.notice(false);
-            if a.peek_home().is_some() {
-                a.peek.notify(a.start.elapsed().as_secs_f64());
-            }
-        }
-    });
+    super::news::add(card, receipt);
+    false
 }
 
 #[cfg(test)]

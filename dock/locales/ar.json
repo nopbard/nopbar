@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "بطارية الأجهزة.",
   "widgets.device_battery_alerts.hint": "تنبيه عند 20% أو أقل",
   "widgets.add": "إضافة عناصر واجهة",
+  "assistant.news": "الأخبار",
+  "assistant.news_unread": "الأخبار {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

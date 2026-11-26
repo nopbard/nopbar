@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "裝置電量.",
   "widgets.device_battery_alerts.hint": "電量 20% 或以下時通知",
   "widgets.add": "新增小工具",
+  "assistant.news": "消息",
+  "assistant.news_unread": "消息 {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "Laitteiden akku.",
   "widgets.device_battery_alerts.hint": "Ilmoitus akun varauksen ollessa 20 % tai vähemmän",
   "widgets.add": "Lisää pienoisohjelmia",
+  "assistant.news": "Uutiset",
+  "assistant.news_unread": "Uutiset {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

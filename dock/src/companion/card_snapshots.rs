@@ -223,7 +223,7 @@ fn harmony_companion_fixed_panels() {
 fn hidden_card_releases_its_wallpaper_listener() {
     let stage = kit::stage();
     assert!(!active());
-    assert!(show(&stage.gfx, morning_fixture()));
+    assert!(show_at(&stage.gfx, morning_fixture(), Anchor::Body { work: RECT::default(), dpi: 1., tip: (0., 0.) }));
     let h = VIEW.with(|v| v.borrow().as_ref().unwrap().hwnd);
     assert!(backdrop::listening(h));
     unsafe {
@@ -331,7 +331,7 @@ pub(crate) fn snapshot(gfx: &crate::gfx::Gfx, name: &str, card: &Card) {
 fn review_7_assistant_card_registers_and_forgets_capture_privacy() {
     let stage = crate::gfx::promo_kit::stage();
     close();
-    assert!(show(&stage.gfx, morning_fixture()));
+    assert!(show_at(&stage.gfx, morning_fixture(), body_anchor()));
     let h = VIEW.with(|v| v.borrow().as_ref().unwrap().hwnd);
     let registered = crate::desklayer::privacy::registered(h);
     close();
@@ -339,38 +339,91 @@ fn review_7_assistant_card_registers_and_forgets_capture_privacy() {
     assert!(!crate::desklayer::privacy::registered(h));
 }
 
-#[test]
-fn review_7_chat_returns_unconsumed_briefing_kind() {
-    let stage = crate::gfx::promo_kit::stage();
-    close();
-    assert!(show(&stage.gfx, morning_fixture()));
-    assert!(matches!(interrupt_for_chat(), Some(Kind::Morning)));
-    assert!(!active());
-    assert!(interrupt_for_chat().is_none());
+fn body_anchor() -> Anchor {
+    Anchor::Body {
+        work: RECT { left: 0, top: 0, right: 1000, bottom: 800 },
+        dpi: 1.,
+        tip: (500., 650.),
+    }
 }
 
 #[test]
-fn review_7_interruption_restores_same_day_morning_and_wrap_allowance() {
-    let mut cfg = super::super::model::Config {
-        last_greet: Some(20261117),
-        ..Default::default()
+fn chat_interrupts_unshown_body_cards_and_only_replays_shown_briefings() {
+    let stage = kit::stage();
+    close();
+    assert!(show_at(&stage.gfx, morning_fixture(), body_anchor()));
+    assert!(interrupt_for_chat().is_none());
+    assert!(!active());
+
+    assert!(show_at(&stage.gfx, morning_fixture(), body_anchor()));
+    VIEW.with(|v| v.borrow_mut().as_mut().unwrap().opened = Some(Instant::now()));
+    assert_eq!(interrupt_for_chat().unwrap().card.kind, Kind::Morning);
+    assert!(!active());
+}
+
+#[test]
+fn slot_position_respects_gap_and_monitor_edges_at_each_scale() {
+    for dpi in [1., 1.5] {
+        let work = RECT { left: -1600, top: 20, right: 0, bottom: 1000 };
+        let rect = RECT { left: -1050, top: 20, right: -1010, bottom: 60 };
+        let anchor = SlotAnchor { rect, dpi };
+        let r = place_slot(anchor, work, 120.);
+        assert_eq!(r.top, rect.bottom + (8. * dpi).round() as i32);
+        assert_eq!((r.left + r.right) / 2, (rect.left + rect.right) / 2);
+        let r = place_slot(SlotAnchor { rect: RECT { left: -48, right: -8, ..rect }, dpi }, work, 120.);
+        assert_eq!(r.right, work.right);
+        let bottom = RECT { top: 1000, bottom: 1030, ..rect };
+        let r = place_slot(SlotAnchor { rect: bottom, dpi }, work, 120.);
+        assert_eq!(r.bottom, bottom.top - (8. * dpi).round() as i32);
+    }
+    assert!(entry_offset(Duration::ZERO) < 0.);
+    assert!(entry_offset(ARRIVAL / 2) > 0.);
+    assert_eq!(entry_offset(ARRIVAL), 0.);
+}
+
+#[test]
+fn news_pages_preserve_the_original_row_routes() {
+    let card = Card {
+        kind: Kind::News, title: "News".into(), emphasis: None, buttons: vec![],
+        lines: (0..20).map(|i| Line::new(glass::Mark::Note, i.to_string(), Route::Notes(i.to_string()))).collect(),
     };
-    cfg.routine.judged(10);
-    assert!(restore_allowance(Some(Kind::Morning), &mut cfg));
-    let rhythm = super::super::rhythm::Rhythm::default();
-    assert!(rhythm.morning_due(
-        super::super::rhythm::Calendar {
-            date: 20261117,
-            minute: 1200
-        },
-        cfg.last_greet,
-        Some(super::super::model::State::Idle)
-    ));
-    assert!(!restore_allowance(Some(Kind::Wrap), &mut cfg));
-    assert!(cfg.routine.due(10, 1200));
-    cfg.last_greet = Some(20261117);
-    cfg.routine.judged(10);
-    assert!(!restore_allowance(None, &mut cfg));
-    assert_eq!(cfg.last_greet, Some(20261117));
-    assert!(!cfg.routine.due(10, 1200));
+    let first = viewport(&card, 0, 10);
+    assert_eq!(first.lines.len(), 8);
+    assert!(matches!(first.buttons[0].route, Route::Scroll(8)));
+    let last = viewport(&card, 12, 10);
+    assert!(matches!(last.hit(30., TOP + 8.), Some(Route::Notes(id)) if id == "12"));
+    assert!(matches!(last.buttons[0].route, Route::Scroll(-8)));
+}
+
+#[test]
+fn outside_dismissal_has_grace_and_does_not_imply_read() {
+    let opened = u32::MAX - 500;
+    assert!(!dismissal_ready(opened, opened - 1));
+    assert!(!dismissal_ready(opened, opened.wrapping_add(1499)));
+    assert!(dismissal_ready(opened, opened.wrapping_add(1500)));
+
+    let now = Instant::now();
+    let mut dismissed = CardLifetime::new(now);
+    dismissed.dismiss(now + Duration::from_secs(2));
+    dismissed.opacity(now + LIFETIME, true, false);
+    assert!(!dismissed.engaged);
+
+    let mut expired = CardLifetime::new(now);
+    expired.opacity(now + LIFETIME, false, false);
+    assert!(expired.engaged);
+
+    let mut hovered = CardLifetime::new(now);
+    hovered.opacity(now, true, false);
+    assert!(hovered.engaged);
+}
+
+#[test]
+fn precision_wheel_accumulates_and_keeps_signed_remainders() {
+    let mut remainder = 0;
+    assert_eq!(wheel_steps(&mut remainder, 75), 0);
+    assert_eq!(wheel_steps(&mut remainder, -20), 0);
+    assert_eq!(wheel_steps(&mut remainder, 70), 1);
+    assert_eq!(remainder, 5);
+    assert_eq!(wheel_steps(&mut remainder, -255), -2);
+    assert_eq!(remainder, -10);
 }

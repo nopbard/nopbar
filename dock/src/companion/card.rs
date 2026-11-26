@@ -1,7 +1,6 @@
 //! Shared monochrome local cards, rendered identically on screen and offscreen.
-use super::{
-    chat::paint::{contains, rect},
-};
+use super::{chat::paint::{contains, rect}, SlotAnchor};
+use super::card_input::{Hooks, DISMISS};
 use crate::desklayer::{backdrop, card as glass};
 use std::{
     cell::RefCell,
@@ -25,19 +24,30 @@ pub enum Route {
     Close,
     Tomorrow(Vec<String>),
     OpenFile(std::path::PathBuf),
+    Complete(String),
+    Snooze(String),
+    News,
+    Scroll(isize),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Morning,
     Wrap,
     Download,
+    Reminder,
+    Battery,
+    Bundle,
+    News,
 }
 impl Kind {
-    fn glyph(self) -> glass::Mark {
+    pub(super) fn glyph(self) -> glass::Mark {
         match self {
             Self::Morning => glass::Mark::Sun,
             Self::Wrap => glass::Mark::Moon,
             Self::Download => glass::Mark::Download,
+            Self::Reminder => glass::Mark::Note,
+            Self::Battery => glass::Mark::Battery,
+            Self::Bundle | Self::News => glass::Mark::Inbox,
         }
     }
 }
@@ -269,6 +279,52 @@ fn place(work: RECT, dpi: f32, tip: (f32, f32), height: f32, previous: Option<RE
         bottom: y + h,
     }
 }
+
+pub(super) fn place_slot(slot: SlotAnchor, work: RECT, height: f32) -> RECT {
+    let SlotAnchor { rect, dpi } = slot;
+    let w = (WIDTH * dpi).ceil() as i32;
+    let h = (height * dpi).ceil() as i32;
+    let gap = (8. * dpi).round() as i32;
+    let center = rect.left + (rect.right - rect.left) / 2;
+    let below = rect.bottom + gap;
+    let above = rect.top - gap;
+    let room_below = work.bottom - below;
+    let top = if h <= room_below || room_below >= above - work.top { below } else { above - h };
+    super::panels::clamp(work, (w, h), (center - w / 2, top))
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Anchor {
+    Body { work: RECT, dpi: f32, tip: (f32, f32) },
+    Slot { slot: SlotAnchor, work: RECT },
+}
+
+impl Anchor {
+    pub(super) fn slot(self) -> Option<SlotAnchor> {
+        match self { Self::Slot { slot, .. } => Some(slot), Self::Body { .. } => None }
+    }
+
+    fn display(self) -> (RECT, f32) {
+        match self {
+            Self::Body { work, dpi, .. } | Self::Slot { work, slot: SlotAnchor { dpi, .. } } => (work, dpi),
+        }
+    }
+
+    fn visible_rows(self) -> usize {
+        let (work, dpi) = self.display();
+        let room = if let Some(slot) = self.slot() {
+            (work.bottom - slot.rect.bottom).max(slot.rect.top - work.top) as f32 / dpi - 8.
+        } else { (work.bottom - work.top) as f32 / dpi };
+        ((room - TOP - 16.) / 32.).max(1.) as usize
+    }
+}
+
+const ARRIVAL: Duration = Duration::from_millis(240);
+fn entry_offset(elapsed: Duration) -> f32 {
+    if elapsed >= ARRIVAL { return 0.; }
+    let t = elapsed.as_secs_f32() / ARRIVAL.as_secs_f32();
+    -8. * (1. - t).powi(2) * (t * std::f32::consts::TAU).cos()
+}
 const LIFETIME: Duration = Duration::from_secs(20);
 const FADE: Duration = Duration::from_millis(160);
 
@@ -276,11 +332,12 @@ struct CardLifetime {
     remaining: Duration,
     last: Instant,
     hovered: bool,
+    engaged: bool,
     closing: Option<Instant>,
 }
 impl CardLifetime {
     fn new(now: Instant) -> Self {
-        Self { remaining: LIFETIME, last: now, hovered: false, closing: None }
+        Self { remaining: LIFETIME, last: now, hovered: false, engaged: false, closing: None }
     }
 
     fn dismiss(&mut self, now: Instant) {
@@ -288,13 +345,16 @@ impl CardLifetime {
     }
 
     fn opacity(&mut self, now: Instant, hovered: bool, motion: bool) -> f32 {
-        if !self.hovered {
-            self.remaining = self.remaining.saturating_sub(now.saturating_duration_since(self.last));
-        }
-        self.last = now;
-        self.hovered = hovered;
-        if self.remaining.is_zero() {
-            self.dismiss(now);
+        if self.closing.is_none() {
+            if !self.hovered {
+                self.remaining = self.remaining.saturating_sub(now.saturating_duration_since(self.last));
+            }
+            self.last = now;
+            self.hovered = hovered;
+            self.engaged |= hovered || self.remaining.is_zero();
+            if self.remaining.is_zero() {
+                self.dismiss(now);
+            }
         }
         match self.closing {
             Some(at) if motion => 1. - (now.saturating_duration_since(at).as_secs_f32() / FADE.as_secs_f32()).min(1.),
@@ -306,6 +366,7 @@ impl CardLifetime {
 
 struct Overlay {
     card: Card,
+    visible_card: Card,
     hwnd: HWND,
     surface: crate::desklayer::surface::Glass,
     lifetime: CardLifetime,
@@ -313,22 +374,82 @@ struct Overlay {
     stamp: Option<(RECT, bool)>,
     position: Option<RECT>,
     display: Option<(RECT, f32)>,
+    slot: Option<SlotAnchor>,
+    opened: Option<Instant>,
+    opened_tick: Option<u32>,
+    read_ids: Vec<u64>,
+    scroll: usize,
+    wheel_remainder: i32,
+    rows: usize,
+    hooks: Option<Hooks>,
+}
+impl Overlay {
+    fn record_engagement(&mut self) {
+        if self.lifetime.engaged && !self.read_ids.is_empty() {
+            READ.with(|read| read.borrow_mut().append(&mut self.read_ids));
+            super::refresh();
+        }
+    }
 }
 impl Drop for Overlay {
     fn drop(&mut self) {
+        self.hooks.take();
         backdrop::unlisten(self.hwnd);
         crate::desklayer::privacy::forget(self.hwnd);
         unsafe { let _ = DestroyWindow(self.hwnd); }
     }
 }
-thread_local! {static VIEW:RefCell<Option<Overlay>>=const{RefCell::new(None)};static CLICKS:RefCell<Vec<Route>>=const{RefCell::new(Vec::new())};}
+thread_local! {
+    static VIEW: RefCell<Option<Overlay>> = const { RefCell::new(None) };
+    static CLICKS: RefCell<Vec<Route>> = const { RefCell::new(Vec::new()) };
+    static READ: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(super) fn track_read(ids: Vec<u64>) {
+    VIEW.with(|view| {
+        if let Some(view) = view.borrow_mut().as_mut() {
+            view.read_ids = ids;
+            view.record_engagement();
+        }
+    });
+}
+
+pub(super) fn take_read() -> Vec<u64> {
+    READ.with(|read| std::mem::take(&mut *read.borrow_mut()))
+}
 pub fn active() -> bool {
-    VIEW.with(|v| v.borrow().is_some())
+    VIEW.with(|v| v.try_borrow().map_or(true, |v| v.is_some()))
+}
+
+pub(super) fn current_slot() -> Option<SlotAnchor> {
+    VIEW.with(|v| v.try_borrow().ok()?.as_ref()?.slot)
+}
+
+pub(super) struct Interrupted {
+    pub card: Card,
+    pub read_ids: Vec<u64>,
+}
+
+pub(super) fn interrupt_for_chat() -> Option<Interrupted> {
+    VIEW.with(|v| {
+        let mut v = v.borrow_mut();
+        if v.as_ref().is_some_and(|view| view.slot.is_some()) { return None; }
+        let mut view = v.take()?;
+        (view.opened.is_some() && view.lifetime.closing.is_none()
+            && matches!(view.card.kind, Kind::Morning | Kind::Wrap)).then(|| Interrupted {
+                card: view.card.clone(),
+                read_ids: std::mem::take(&mut view.read_ids),
+            })
+    })
+}
+
+pub(super) fn is_history() -> bool {
+    VIEW.with(|v| v.try_borrow().ok().is_some_and(|v| v.as_ref().is_some_and(|v| v.card.kind == Kind::News)))
 }
 pub fn close() -> bool {
     VIEW.with(|v| v.borrow_mut().take().is_some())
 }
-pub fn dismiss() -> bool {
+fn dismiss() -> bool {
     VIEW.with(|v| {
         let mut v = v.borrow_mut();
         let Some(view) = v.as_mut() else { return false; };
@@ -336,11 +457,24 @@ pub fn dismiss() -> bool {
         true
     })
 }
-pub fn interval() -> Option<u32> {
-    VIEW.with(|v| v.borrow().as_ref().map(|v| if v.lifetime.closing.is_some() { 17 } else { 100 }))
+pub(super) fn tapped_body() -> bool {
+    VIEW.with(|cell| {
+        let Ok(mut view) = cell.try_borrow_mut() else { return true; };
+        let Some(view) = view.as_mut() else { return false; };
+        let now = unsafe { windows::Win32::System::SystemInformation::GetTickCount() };
+        if view.opened_tick.is_some_and(|opened| dismissal_ready(opened, now)) {
+            view.lifetime.dismiss(Instant::now());
+        }
+        true
+    })
 }
-pub fn show(gfx: &Rc<crate::gfx::Gfx>, card: Card) -> bool {
-    if super::notifications_quiet() || active() {
+
+pub fn interval() -> Option<u32> {
+    VIEW.with(|v| v.borrow().as_ref().map(|v| if v.lifetime.closing.is_some()
+        || v.slot.is_some() && v.opened.is_some_and(|at| at.elapsed() < ARRIVAL) { 17 } else { 100 }))
+}
+pub(super) fn show_at(gfx: &Rc<crate::gfx::Gfx>, card: Card, anchor: Anchor) -> bool {
+    if active() {
         return false;
     }
     let result = unsafe {
@@ -353,13 +487,23 @@ pub fn show(gfx: &Rc<crate::gfx::Gfx>, card: Card) -> bool {
                 Ok(s) => s,
                 Err(e) => { let _ = DestroyWindow(hwnd); return Err(e); }
             };
+            let rows = anchor.visible_rows();
+            let visible_card = viewport(&card, 0, rows);
             Ok(Overlay {
-                card, hwnd, surface,
+                card, visible_card, hwnd, surface,
                 lifetime: CardLifetime::new(Instant::now()),
                 dpi: 1.,
                 stamp: None,
                 position: None,
                 display: None,
+                slot: anchor.slot(),
+                opened: None,
+                opened_tick: None,
+                read_ids: Vec::new(),
+                scroll: 0,
+                wheel_remainder: 0,
+                rows,
+                hooks: None,
             })
         })()
     };
@@ -377,13 +521,47 @@ pub fn show(gfx: &Rc<crate::gfx::Gfx>, card: Card) -> bool {
         }
     }
 }
-pub fn anchor(work: RECT, dpi: f32, tip: (f32, f32), light: bool, motion: bool) -> Option<Kind> {
-    if super::notifications_quiet() { close(); return None; }
+
+fn viewport(card: &Card, scroll: usize, rows: usize) -> Card {
+    let mut visible = card.clone();
+    if card.kind == Kind::News {
+        let rows = page_size(card, rows);
+        visible.lines = card.lines.iter().skip(scroll).take(rows).cloned().collect();
+        for (has_page, label, direction) in [(scroll > 0, "↑", -1), (scroll + rows < card.lines.len(), "↓", 1)] {
+            if has_page {
+                visible.buttons.push(Button { label: label.into(), route: Route::Scroll(direction * rows as isize), primary: false });
+            }
+        }
+    }
+    visible
+}
+
+fn page_size(card: &Card, rows: usize) -> usize {
+    if card.lines.len() > rows { rows.saturating_sub(2).max(1) } else { rows }
+}
+
+fn scroll(view: &mut Overlay, delta: isize) {
+    let last = view.card.lines.len().saturating_sub(page_size(&view.card, view.rows));
+    let offset = view.scroll.saturating_add_signed(delta).min(last);
+    if view.scroll != offset {
+        view.scroll = offset;
+        view.visible_card = viewport(&view.card, view.scroll, view.rows);
+        view.stamp = None;
+    }
+}
+
+fn wheel_steps(remainder: &mut i32, delta: i16) -> isize {
+    let total = *remainder + i32::from(delta);
+    *remainder = total % 120;
+    (total / 120) as isize
+}
+
+pub(super) fn anchor_at(anchor: Anchor, light: bool, motion: bool) -> bool {
     VIEW.with(|v| {
         let mut v = v.borrow_mut();
-        let view = v.as_mut()?;
+        let Some(view) = v.as_mut() else { return false; };
         let now = Instant::now();
-        let first = !unsafe { IsWindowVisible(view.hwnd).as_bool() };
+        let first = view.opened.is_none();
         if first && view.lifetime.closing.is_none() {
             view.lifetime = CardLifetime::new(now);
         }
@@ -392,37 +570,53 @@ pub fn anchor(work: RECT, dpi: f32, tip: (f32, f32), light: bool, motion: bool) 
             GetCursorPos(&mut cursor).is_ok() && WindowFromPoint(cursor) == view.hwnd
         };
         let opacity = view.lifetime.opacity(now, hovered, motion);
+        view.record_engagement();
         if opacity <= 0. {
             v.take();
-            return None;
+            return false;
         }
+        let (work, dpi) = anchor.display();
         if view.display != Some((work, dpi)) {
             view.position = None;
             view.display = Some((work, dpi));
         }
-        let r = place(work, dpi, tip, view.card.height(), view.position);
-        view.position = Some(r);
+        if anchor.visible_rows() != view.rows {
+            view.rows = anchor.visible_rows();
+            view.scroll = view.scroll.min(view.card.lines.len().saturating_sub(page_size(&view.card, view.rows)));
+            view.visible_card = viewport(&view.card, view.scroll, view.rows);
+            view.stamp = None;
+        }
+        let height = view.visible_card.height();
+        let r = match anchor {
+            Anchor::Body { tip, .. } => place(work, dpi, tip, height, view.position),
+            Anchor::Slot { slot, .. } => place_slot(slot, work, height),
+        };
+        let offset = if motion && anchor.slot().is_some() {
+            (entry_offset(now.saturating_duration_since(view.opened.unwrap_or(now))) * dpi).round() as i32
+        } else { 0 };
+        let moved = super::panels::clamp(work, (r.right - r.left, r.bottom - r.top), (r.left, r.top + offset));
         let (w, h) = ((r.right - r.left) as u32, (r.bottom - r.top) as u32);
-        let (x, y) = (r.left, r.top);
-        view.dpi = dpi;
+        view.slot = anchor.slot();
         let result = unsafe {
             (|| -> Result<()> {
                 let dirty = view.stamp != Some((r, light));
                 if dirty {
                     view.surface.resize((w as i32, h as i32), dpi)?;
-                    let mut theme = crate::theme::Theme::graphite();
+                    let mut theme = crate::dock::companion_theme().unwrap_or_else(crate::theme::Theme::graphite);
                     theme.is_light = light;
                     let under = backdrop::under_for(view.hwnd, r);
                     view.surface.draw(|dc, gfx| {
-                        glass::body(dc, &theme, WIDTH, view.card.height(), under.as_ref())?;
-                        paint_content(dc, gfx, &view.card, &theme, under.as_ref())
+                        glass::body(dc, &theme, WIDTH, height, under.as_ref())?;
+                        paint_content(dc, gfx, &view.visible_card, &theme, under.as_ref())
                     })?;
                     let glass = glass::glass_for(&theme, under.as_ref());
                     crate::desklayer::shade::set(view.hwnd, glass.map_or(light, |g| g.light), glass.is_some(), false);
                     view.stamp = Some((r, light));
                 }
-                if dirty || !IsWindowVisible(view.hwnd).as_bool() {
-                    SetWindowPos(view.hwnd, Some(HWND_TOPMOST), x, y, w as i32, h as i32, SWP_NOACTIVATE | SWP_SHOWWINDOW)?;
+                if first || view.position != Some(moved) {
+                    SetWindowPos(view.hwnd, Some(HWND_TOPMOST), moved.left, moved.top, w as i32, h as i32, SWP_NOACTIVATE | SWP_SHOWWINDOW)?;
+                }
+                if dirty || view.position != Some(moved) {
                     crate::desklayer::shade::sync(view.hwnd);
                 }
                 if view.lifetime.closing.is_some() {
@@ -435,21 +629,22 @@ pub fn anchor(work: RECT, dpi: f32, tip: (f32, f32), light: bool, motion: bool) 
         if let Err(e) = result {
             crate::log!("assistant card: {e}");
             v.take();
-            return None;
+            return false;
         }
-        if first && view.card.kind == Kind::Morning {
-            let shown = view.card.shown_carries();
-            if !shown.is_empty() {
-                crate::notes::runtime::action(crate::notes::runtime::Action::BriefingShown(shown));
-            }
+        view.dpi = dpi;
+        view.position = Some(moved);
+        if first {
+            view.opened = Some(if motion { now } else { now - ARRIVAL });
+            view.opened_tick = Some(unsafe { windows::Win32::System::SystemInformation::GetTickCount() });
+            if !cfg!(test) { view.hooks = Hooks::start(view.hwnd); }
         }
-        first.then_some(view.card.kind)
+        first
     })
 }
 pub fn dispatch() {
     let routes = CLICKS.with(|q| std::mem::take(&mut *q.borrow_mut()));
     for route in routes {
-        dismiss();
+        if !matches!(route, Route::Scroll(_)) { dismiss(); }
         match route {
             Route::Agenda(at) => crate::topbar::companion_agenda(at),
             Route::Notes(id) | Route::BriefingNote { id, .. } => {
@@ -466,6 +661,12 @@ pub fn dispatch() {
                 &path.file_name().unwrap_or_default().to_string_lossy(),
                 crate::launch::Source::Stack,
             )),
+            Route::Complete(id) => crate::notes::runtime::action(crate::notes::runtime::Action::Complete(id)),
+            Route::Snooze(id) => crate::notes::runtime::action(crate::notes::runtime::Action::Snooze(id)),
+            Route::News => super::news::open(),
+            Route::Scroll(delta) => VIEW.with(|v| {
+                if let Some(view) = v.borrow_mut().as_mut() { scroll(view, delta); }
+            }),
             Route::Close => {}
         }
     }
@@ -474,21 +675,66 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRE
     match msg {
         backdrop::WM_BACKDROP => {
             VIEW.with(|v| {
-                if let Some(v) = v.borrow_mut().as_mut() {
+                if let Ok(mut v) = v.try_borrow_mut() {
+                    if let Some(v) = v.as_mut() {
                     v.stamp = None;
+                    }
                 }
             });
             super::refresh();
             LRESULT(0)
         }
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_POINTERACTIVATE => LRESULT(PA_NOACTIVATE as isize),
+        DISMISS => {
+            VIEW.with(|v| {
+                if let Ok(mut v) = v.try_borrow_mut() {
+                    if let Some(view) = v.as_mut().filter(|view| view.hwnd == h && view.hooks.as_ref().is_some_and(|hook| hook.token == lp.0 as usize)) {
+                        if view.opened_tick.is_some_and(|opened| dismissal_ready(opened, wp.0 as u32)) {
+                            view.lifetime.dismiss(Instant::now());
+                            super::refresh();
+                        }
+                    }
+                }
+            });
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            VIEW.with(|v| {
+                if let Ok(mut v) = v.try_borrow_mut() {
+                    if let Some(view) = v.as_mut().filter(|view| view.hwnd == h && view.lifetime.closing.is_none()) {
+                        view.lifetime.engaged = true;
+                        view.record_engagement();
+                    }
+                }
+            });
+            LRESULT(0)
+        }
+        WM_MOUSEWHEEL => {
+            VIEW.with(|v| {
+                let Ok(mut v) = v.try_borrow_mut() else { return; };
+                if let Some(v) = v.as_mut().filter(|v| v.hwnd == h && v.card.kind == Kind::News) {
+                    let steps = wheel_steps(&mut v.wheel_remainder, (wp.0 >> 16) as i16);
+                    scroll(v, -steps * 3);
+                }
+            });
+            super::refresh();
+            LRESULT(0)
+        }
         WM_LBUTTONUP => {
             VIEW.with(|v| {
-                if let Some(v) = v.borrow().as_ref().filter(|v| v.lifetime.closing.is_none()) {
+                let Ok(mut v) = v.try_borrow_mut() else { return; };
+                if let Some(v) = v.as_mut().filter(|v| v.hwnd == h && v.lifetime.closing.is_none()) {
                     let x = (lp.0 as i16) as f32 / v.dpi;
                     let y = ((lp.0 >> 16) as i16) as f32 / v.dpi;
-                    if let Some(route) = v.card.hit(x, y) {
-                        CLICKS.with(|q| q.borrow_mut().push(route));
+                    if let Some(route) = v.visible_card.hit(x, y) {
+                        v.lifetime.engaged = true;
+                        v.record_engagement();
+                        let button = v.visible_card.buttons.iter().enumerate()
+                            .any(|(i, _)| contains(button_rect(&v.visible_card, i), x, y));
+                        if !matches!(route, Route::Close) || button {
+                            CLICKS.with(|q| q.borrow_mut().push(route));
+                        }
                     }
                 }
             });
@@ -498,26 +744,10 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRE
         _ => DefWindowProcW(h, msg, wp, lp),
     }
 }
+
+fn dismissal_ready(opened: u32, input: u32) -> bool {
+    (1500..=i32::MAX as u32).contains(&input.wrapping_sub(opened))
+}
 #[cfg(test)]
 #[path = "card_snapshots.rs"]
 pub(super) mod tests;
-
-pub fn interrupt_for_chat() -> Option<Kind> {
-    VIEW.with(|v| v.borrow_mut().take().filter(|v| v.lifetime.closing.is_none()).map(|v| v.card.kind))
-}
-
-/// An interrupted briefing can be offered again after chat, even later that day.
-pub fn restore_allowance(kind: Option<Kind>, cfg: &mut super::model::Config) -> bool {
-    match kind {
-        Some(Kind::Morning) => {
-            cfg.last_greet = None;
-            true
-        }
-        Some(Kind::Wrap) => {
-            cfg.routine.wrapped = None;
-            cfg.routine.dirty = true;
-            false
-        }
-        _ => false,
-    }
-}

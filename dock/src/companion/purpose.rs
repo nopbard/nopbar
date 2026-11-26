@@ -110,11 +110,13 @@ impl Purpose {
         self.last.date != 0 && !self.last.away && self.last.idle_seconds < 300.
     }
 
-    pub fn away(&mut self, away: bool, now: f64) {
+    pub fn away(&mut self, away: bool, now: f64) -> bool {
+        let returned = !away && self.away_at.is_some_and(|at| long_absence(at, now));
         let mut s = self.last;
         s.now = now;
         s.away = away;
         self.observe(s);
+        returned
     }
 
     pub fn observe(&mut self, s: Sample) {
@@ -129,7 +131,7 @@ impl Purpose {
             self.seated = false;
         } else if let Some(at) = self.away_at.take() {
             self.wake = true;
-            self.reunion |= s.now - at > 7200.;
+            self.reunion |= long_absence(at, s.now);
             self.awake_at = Some(s.now);
         }
         if !s.away {
@@ -352,6 +354,22 @@ unsafe fn desktop_window(h: windows::Win32::Foundation::HWND) -> bool {
         String::from_utf16_lossy(&class[..n]).as_str(),
         "WorkerW" | "Progman" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
     )
+}
+
+fn long_absence(at: f64, now: f64) -> bool {
+    now - at > 2. * 60. * 60.
+}
+
+#[cfg(test)]
+#[test]
+fn return_signal_requires_more_than_two_hours_and_fires_once() {
+    let mut purpose = Purpose::default();
+    assert!(!purpose.away(true, 10.));
+    assert!(!purpose.away(false, 7210.));
+    assert!(!purpose.away(true, 7450.));
+    assert!(!purpose.away(true, 10_000.));
+    assert!(purpose.away(false, 14_651.));
+    assert!(!purpose.away(false, 14_652.));
 }
 
 pub fn uptime() -> f64 {

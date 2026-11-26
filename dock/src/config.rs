@@ -576,7 +576,7 @@ pub const TOPBAR_HEIGHT_DEFAULTS: u32 = 3;
 const TOPBAR_SINCE_26: u64 = 2;
 /// Legacy TopbarCfg::style for the finish's style (style_for).
 pub const TOPBAR_STYLE_AUTO: &str = "auto";
-const NATIVE_DEFAULTS_VERSION: u32 = 6;
+const NATIVE_DEFAULTS_VERSION: u32 = 7;
 
 /// TopbarCfg::island_displays values, in the settings' order.
 pub const ISLAND_DISPLAYS: [&str; 2] = ["active", "every"];
@@ -1853,7 +1853,6 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
         if cfg.shortcut("search") == "alt+space" { cfg.set_shortcut("search", "none"); }
         if cfg.hide_taskbar && cfg.shortcut("dock_apps") == "none" { cfg.set_shortcut("dock_apps", "win"); }
         cfg.widgets.hide_from_capture = false;
-        cfg.companion.download_notifications = false;
     }
     if !cfg.read_only && native_version < 2 {
         if matches!(cfg.dock.displays.trim(), "" | "follow") { cfg.dock.displays = "every".into(); }
@@ -1895,10 +1894,11 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
         if cfg.shortcut("focus_dock") == "none" { cfg.set_shortcut("focus_dock", "win+t"); }
         cfg.native_defaults_version = 5;
     }
+    if !cfg.read_only && native_version < 6 && cfg.topbar.style.trim().eq_ignore_ascii_case("frost") {
+        cfg.topbar.style = "glass".into();
+    }
     if migrated {
-        if cfg.topbar.style.trim().eq_ignore_ascii_case("frost") {
-            cfg.topbar.style = "glass".into();
-        }
+        cfg.companion.download_notifications = true;
         cfg.native_defaults_version = NATIVE_DEFAULTS_VERSION;
     }
     Ok(Parsed { cfg, migrated })
@@ -2549,9 +2549,22 @@ mod declutter_tests {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn download_notices_default_on_and_only_migrate_once() {
+        assert!(Config::default().companion.download_notifications);
+        let old = r#"{"version":2,"native_defaults_version":6,"companion":{"download_notifications":false}}"#;
+        let mut parsed = parse(old).unwrap();
+        assert!(parsed.migrated && parsed.cfg.companion.download_notifications);
+        assert!(!parsed.cfg.companion.visible);
+        parsed.cfg.companion.download_notifications = false;
+        let saved = serde_json::to_string(&parsed.cfg).unwrap();
+        let reloaded = parse(&saved).unwrap();
+        assert!(!reloaded.migrated && !reloaded.cfg.companion.download_notifications);
+    }
+
+    #[test]
     fn windows_feel_defaults_v3_install_migrate_and_preserve() {
         let new = Config::default();
-        assert_eq!((new.native_defaults_version, new.dock.icon_size, new.dock.max_scale), (6, 44.0, 1.0));
+        assert_eq!((new.native_defaults_version, new.dock.icon_size, new.dock.max_scale), (NATIVE_DEFAULTS_VERSION, 44.0, 1.0));
         assert!(!new.dock.display_apps_only, "every dock shows every running app");
         assert_eq!(new.dock.indicator, Indicator::Bar);
         assert!(!new.dock.squircle && !new.dock.show_trash && !new.animation.bounce && !new.topbar.show_app_menus);
@@ -2578,7 +2591,7 @@ mod tests {
         assert!(old.migrated);
         assert_eq!(old.cfg.shortcut("search"), "none");
         assert_eq!(old.cfg.shortcut("dock_apps"), "win");
-        assert!(!old.cfg.widgets.hide_from_capture && !old.cfg.companion.download_notifications);
+        assert!(!old.cfg.widgets.hide_from_capture && old.cfg.companion.download_notifications);
         let custom = super::parse(r#"{"version":2,"hide_taskbar":false,"shortcuts":{"search":"ctrl+space","dock_apps":"alt"}}"#).unwrap().cfg;
         assert_eq!(custom.shortcut("search"), "ctrl+space");
         assert_eq!(custom.shortcut("dock_apps"), "alt");
@@ -2995,7 +3008,7 @@ mod tests {
         for v in [2, 3] {
             let p = parse(&format!(r#"{{"version":2,"native_defaults_version":{v},"dock":{{"displays":"every","display_apps_only":true,"icon_size":52}}}}"#)).unwrap();
             assert!(p.migrated && !p.cfg.dock.display_apps_only, "v{v}");
-            assert_eq!(p.cfg.native_defaults_version, 6);
+            assert_eq!(p.cfg.native_defaults_version, NATIVE_DEFAULTS_VERSION);
         }
         // A v3 file's other values are not migrated again.
         let v3 = parse(r#"{"version":2,"native_defaults_version":3,"dock":{"icon_size":52,"indicator":"dot"}}"#).unwrap();
@@ -3022,7 +3035,7 @@ mod tests {
     fn native_decisions_migrate_v1_once_without_repeating_bundle_one() {
         let p = parse(r#"{"version":2,"native_defaults_version":1,"shortcuts":{"search":"alt+space","dock_apps":"none"},"widgets":{"hide_from_capture":true},"companion":{"download_notifications":true},"dock":{"displays":"follow","display_apps_only":false},"focus_timer":{"dnd":false}}"#).unwrap();
         assert!(p.migrated);
-        assert_eq!(p.cfg.native_defaults_version, 6);
+        assert_eq!(p.cfg.native_defaults_version, NATIVE_DEFAULTS_VERSION);
         assert_eq!(p.cfg.dock.display_mode(), DisplayMode::Every);
         assert!(!p.cfg.dock.only_display_apps() && p.cfg.focus_timer.dnd);
         assert!(p.cfg.widgets.hide_from_capture && p.cfg.companion.download_notifications);
@@ -3622,7 +3635,7 @@ mod tests {
             let old = format!(r#"{{"version":2,"native_defaults_version":5,"topbar":{{"style":"{style}"}}}}"#);
             let parsed = parse(&old).unwrap();
             assert!(parsed.migrated);
-            assert_eq!(parsed.cfg.native_defaults_version, 6);
+            assert_eq!(parsed.cfg.native_defaults_version, NATIVE_DEFAULTS_VERSION);
             assert_eq!(parsed.cfg.topbar.style, if style == "frost" { "glass" } else { style });
             let mut config = parsed.cfg;
             config.topbar.style = style.into();

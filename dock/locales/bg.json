@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "Батерия на устройствата.",
   "widgets.device_battery_alerts.hint": "Известие при заряд 20% или по-малко",
   "widgets.add": "Добавяне на изпълними модули",
+  "assistant.news": "Новини",
+  "assistant.news_unread": "Новини {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

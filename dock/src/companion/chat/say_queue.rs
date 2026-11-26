@@ -1,4 +1,4 @@
-//! Messages arriving during a reminder are presented when its bubble has closed.
+//! Messages wait until chat can present the next reply.
 #[derive(Default)]
 pub struct SayQueue(std::collections::VecDeque<String>);
 impl SayQueue {
@@ -17,7 +17,7 @@ impl SayQueue {
 mod tests {
     use super::*;
     #[test]
-    fn review_say_during_reminder_waits_and_keeps_fifo() {
+    fn messages_wait_until_chat_is_ready_and_keep_fifo() {
         let mut q = SayQueue::default();
         q.push("first".into());
         q.push("second".into());

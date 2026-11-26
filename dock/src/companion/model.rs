@@ -50,7 +50,7 @@ impl Default for Config {
             life: true,
             morning_briefing: true,
             day_wrap: true,
-            download_notifications: false,
+            download_notifications: true,
             routine: Default::default(),
             activity_budget: Default::default(),
             last_greet: None,

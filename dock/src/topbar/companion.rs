@@ -64,6 +64,11 @@ unsafe fn paint_cell(dc: &windows::Win32::Graphics::Direct2D::ID2D1DeviceContext
     Ok(())
 }
 
+#[cfg(test)]
+pub(crate) unsafe fn paint_home(dc: &windows::Win32::Graphics::Direct2D::ID2D1DeviceContext, h: f32, ink: crate::theme::Rgba, notice: bool) -> Result<()> {
+    paint_cell(dc, Picture::Home { notice }, h, ink)
+}
+
 impl TopBar {
     pub(super) fn companion_surface(&mut self) -> Option<(CompositionSurfaceBrush, f32, f32)> {
         let h = (self.height - 8.0).max(12.0);
@@ -105,43 +110,67 @@ pub fn companion_anchor() -> Option<crate::companion::SlotAnchor> {
         bars.iter()
             .find(|b| Some(b.monitor) == monitor)
             .or_else(|| bars.iter().find(|b| b.primary))
-            .filter(|b| !b.hidden_full && unsafe { IsWindowVisible(b.hwnd).as_bool() })
-            .and_then(|b| b.slot_of(Cell::Companion).map(|i| (b, b.slot_rect(i))))
-            .filter(|(b, r)| r.bottom > b.monitor.top && r.top < b.monitor.bottom)
-            .map(|(b, rect)| crate::companion::SlotAnchor { rect, dpi: b.scale })
+            .and_then(slot_anchor)
     })
 }
-pub fn companion_changed(bounce: bool) {
+
+fn slot_anchor(b: &TopBar) -> Option<crate::companion::SlotAnchor> {
+    if b.hidden_full || !unsafe { IsWindowVisible(b.hwnd).as_bool() } { return None; }
+    let rect = b.slot_rect(b.slot_of(Cell::Companion)?);
+    (rect.bottom > b.monitor.top && rect.top < b.monitor.bottom)
+        .then_some(crate::companion::SlotAnchor { rect, dpi: b.scale })
+}
+
+pub fn companion_news_anchor(preferred: Option<crate::companion::SlotAnchor>) -> Option<(crate::companion::SlotAnchor, RECT)> {
+    BARS.with(|bars| {
+        let bars = bars.try_borrow().ok()?;
+        let visible = || bars.iter().filter_map(|b| slot_anchor(b).map(|slot| (b, slot)));
+        let (bar, slot) = if let Some(old) = preferred {
+            visible().find(|(b, _)| {
+                old.rect.left >= b.monitor.left && old.rect.left < b.monitor.right
+                    && old.rect.top >= b.monitor.top && old.rect.top < b.monitor.bottom
+            })
+        } else {
+            let mouse = crate::monitors::under_cursor().map(|m| m.handle);
+            visible().find(|(b, _)| Some(b.hmon) == mouse)
+                .or_else(|| visible().find(|(b, _)| b.primary))
+        }?;
+        Some((slot, crate::monitors::info(bar.hmon).map_or(bar.monitor, |m| m.work)))
+    })
+}
+
+pub fn companion_news_bounce(anchor: crate::companion::SlotAnchor) {
+    BARS.with(|bars| {
+        let Ok(bars) = bars.try_borrow() else { return; };
+        if let Some(bar) = bars.iter().find(|b| slot_anchor(b).is_some_and(|slot| slot.rect == anchor.rect)) {
+            bounce_slot(bar);
+        }
+    });
+}
+
+pub fn companion_changed() {
     BARS.with(|bars| {
         let Ok(mut bars) = bars.try_borrow_mut() else {
             return;
         };
         for b in bars.iter_mut() {
             b.update();
-            if bounce && !b.hidden_full && crate::effects::motion() {
-                if let Some(i) = b.slot_of(Cell::Companion) {
-                    let slot = &b.slots[i];
-                    let _ = (|| -> Result<()> {
-                        let a = b.gfx.compositor.CreateScalarKeyFrameAnimation()?;
-                        for (p, dy) in [
-                            (0.0, 0.0),
-                            (0.25, -2.5),
-                            (0.5, 0.0),
-                            (0.7, -1.0),
-                            (1.0, 0.0),
-                        ] {
-                            a.InsertKeyFrame(p, slot.at.1 + dy)?;
-                        }
-                        a.SetDuration(windows::Foundation::TimeSpan {
-                            Duration: 7_000_000,
-                        })?;
-                        slot.visual.StartAnimation(&HSTRING::from("Offset.Y"), &a)?;
-                        Ok(())
-                    })();
-                }
-            }
         }
     });
+}
+
+fn bounce_slot(bar: &TopBar) {
+    let Some(i) = bar.slot_of(Cell::Companion) else { return; };
+    let slot = &bar.slots[i];
+    let _ = (|| -> Result<()> {
+        let a = bar.gfx.compositor.CreateScalarKeyFrameAnimation()?;
+        for (p, dy) in [(0., 0.), (0.25, -2.5), (0.5, 0.), (0.7, -1.), (1., 0.)] {
+            a.InsertKeyFrame(p, slot.at.1 + dy)?;
+        }
+        a.SetDuration(windows::Foundation::TimeSpan { Duration: 7_000_000 })?;
+        slot.visual.StartAnimation(&HSTRING::from("Offset.Y"), &a)?;
+        Ok(())
+    })();
 }
 
 pub(super) const WM_AGENDA:u32=WM_APP+92;

@@ -37,7 +37,6 @@ pub mod store;
 pub mod time;
 pub mod inbox;
 pub mod reminders;
-pub(crate) mod reminder_delivery;
 pub mod toast;
 pub(crate) mod runtime;
 pub(crate) mod widgets;

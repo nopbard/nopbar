@@ -67,6 +67,7 @@ mod sound;
 mod split;
 mod stack;
 mod trayicon;
+pub(crate) use trayicon::companion_news_anchor as companion_tray_news_anchor;
 mod views;
 
 use edge::Frame;

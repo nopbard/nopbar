@@ -114,41 +114,28 @@ pub fn wrap(rows: &[crate::notes::inbox::Row], now: i64) -> Option<Card> {
     })
 }
 pub fn poll() {
-    if super::card::active() || super::chat::busy() {
-        return;
-    }
     let local = crate::notes::time::now();
     let day = local.div_euclid(86400);
     let minute = (local.rem_euclid(86400) / 60) as u16;
     let due = super::APP.with(|a| {
         a.borrow()
             .as_ref()
-            .is_some_and(|a| a.cfg.day_wrap && a.purpose.using() && a.cfg.routine.due(day, minute))
+            .is_some_and(|a| a.cfg.enabled && a.cfg.day_wrap && a.purpose.using() && a.cfg.routine.due(day, minute))
     });
-    if !due || super::remind::delivery() != crate::notes::reminders::Delivery::Bubble {
+    let receipt = super::news::Receipt::Wrap(day);
+    if !due || super::news::waiting(&receipt) {
         return;
     }
     let Some(rows) = crate::notes::runtime::assistant_snapshot() else {
         return;
     };
-    let card = wrap(&rows, local);
-    super::APP.with(|a| {
-        let mut a = a.borrow_mut();
-        let Some(a) = a.as_mut() else {
-            return;
-        };
-        if let Some(card) = card {
-            if !super::card::show(&a.gfx, card) {
-                return;
-            }
-            a.model.landed(std::time::Instant::now());
-            a.purpose.notice(false);
-            if a.peek_home().is_some() {
-                a.peek.notify(a.start.elapsed().as_secs_f64());
-            }
-        }
-        a.cfg.routine.judged(day);
-    });
+    if let Some(card) = wrap(&rows, local) {
+        super::news::add(card, receipt);
+    } else {
+        super::APP.with(|a| {
+            if let Some(a) = a.borrow_mut().as_mut() { a.cfg.routine.judged(day); }
+        });
+    }
 }
 #[cfg(test)]
 mod tests {

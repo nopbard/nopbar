@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "Batéria zariadení.",
   "widgets.device_battery_alerts.hint": "Upozornenie pri nabití 20 % alebo menej",
   "widgets.add": "Pridať miniaplikácie",
+  "assistant.news": "Novinky",
+  "assistant.news_unread": "Novinky {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

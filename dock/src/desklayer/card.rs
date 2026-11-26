@@ -606,10 +606,6 @@ pub unsafe fn pill(dc: &ID2D1DeviceContext,gfx:&Gfx,theme:&Theme,s:&str,r:D2D_RE
     draw_pill(dc,gfx,s,r,face,text)
 }
 
-pub unsafe fn pill_on_backdrop(dc: &ID2D1DeviceContext, gfx: &Gfx, theme: &Theme, s: &str, r: D2D_RECT_F) -> Result<()> {
-    draw_pill(dc, gfx, s, r, rgba(surface(theme.is_light)), rgba(ink(theme, 1)))
-}
-
 unsafe fn draw_pill(dc: &ID2D1DeviceContext, gfx: &Gfx, s: &str, r: D2D_RECT_F, face: D2D1_COLOR_F, text: D2D1_COLOR_F) -> Result<()> {
     rounded(dc,r,16.,face)?;
     let layout=pill_layout(gfx,s,r,13.)?;

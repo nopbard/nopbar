@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "Baterai perangkat.",
   "widgets.device_battery_alerts.hint": "Notifikasi saat baterai 20% atau kurang",
   "widgets.add": "Tambahkan widget",
+  "assistant.news": "Kabar",
+  "assistant.news_unread": "Kabar {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

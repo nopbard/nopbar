@@ -1,5 +1,5 @@
 //! Custom layered input/answer bubbles. No child controls or input hooks.
-use crate::{desklayer::{backdrop, card as glass}, notes::reminders::Notice};
+use crate::desklayer::{backdrop, card as glass};
 use super::{bubbles::{Bubbles,Phase},history::History,history_view,input::Editor,paint::{self,Input,Item},state::{Conversation,Key},transport::{self,Update}};
 use super::super::{render,window};
 use std::{cell::{Cell,RefCell},rc::Rc,sync::mpsc,time::Instant};
@@ -29,9 +29,7 @@ struct Engine {
     keep:bool,account:Option<String>,overlay:Option<Overlay>,history_view:Option<history_view::View>,items:Vec<Item>,
     rx:mpsc::Receiver<Update>,tx:mpsc::Sender<Update>,cancel:Option<tokio::sync::oneshot::Sender<()>>,
     started:Instant,motion:bool,previous:HWND,focused:Option<HWND>,allowed:bool,
-    reminder:Option<(Notice,f64)>,
     say_queue:super::say_queue::SayQueue,
-    reminder_wait:bool,
     placement:super::super::panels::ChatPlacement,
     panels_hidden:bool,
 }
@@ -45,7 +43,7 @@ impl Engine {
         let(tx,rx)=mpsc::channel();
         // Saved history is an archive; provider context stays isolated to this session/account.
         let chat=Conversation::default();
-        Self{gfx,bubbles:Bubbles::default(),editor:Editor::default(),history_editor:Editor::default(),chat,account,history,keep,overlay:None,history_view:None,items:Vec::new(),rx,tx,cancel:None,started:Instant::now(),motion,previous:HWND::default(),focused:None,allowed:true,reminder:None,reminder_wait:false,say_queue:Default::default(),placement:Default::default(),panels_hidden:false}
+        Self{gfx,bubbles:Bubbles::default(),editor:Editor::default(),history_editor:Editor::default(),chat,account,history,keep,overlay:None,history_view:None,items:Vec::new(),rx,tx,cancel:None,started:Instant::now(),motion,previous:HWND::default(),focused:None,allowed:true,say_queue:Default::default(),placement:Default::default(),panels_hidden:false}
     }
     fn now(&self)->f64 {self.started.elapsed().as_secs_f64()}
     fn save(&self) {let _=self.history.save(&super::history::path(),self.keep);}
@@ -63,7 +61,6 @@ impl Engine {
     fn close_panels(&mut self) {
         self.panels_hidden=self.chat.pending.is_some();
         if !self.panels_hidden {self.bubbles.cancel();}
-        if let Some((notice,_))=self.reminder.take(){let _ = notice;}
         self.history_view=None;
         self.items.clear();
         self.placement.reset();
@@ -96,8 +93,6 @@ impl Engine {
         }
     }
     unsafe fn open(&mut self)->Result<()> {
-        self.reminder_wait=false;
-        if let Some((notice,_))=self.reminder.take(){let _ = notice;self.bubbles.cancel();}
         self.sync_account();self.overlay()?;
         self.resume_input();
         self.draw()?;let h=self.overlay.as_ref().unwrap().surface.window.hwnd;self.focus(h);ACTIVE.with(|a|a.set(self.active()));Ok(())
@@ -127,9 +122,9 @@ impl Engine {
         }}
     }
     fn drain_say(&mut self) {
-        let ready=self.allowed && self.reminder.is_none() && !self.active() && self.bubbles.phase==Phase::Hidden;
+        let ready=self.allowed && !self.active() && self.bubbles.phase==Phase::Hidden;
         if let Some(text)=self.say_queue.take(ready) {
-            self.placement.reset();self.reminder_wait=false;self.bubbles.say(text.clone(),self.now());
+            self.placement.reset();self.bubbles.say(text.clone(),self.now());
             self.history.push(String::new(),text);self.history.link_last(None,self.bubbles.current.as_ref().map(|m|m.id));self.save();
         }
     }
@@ -142,9 +137,7 @@ impl Engine {
         let work=paint::rect(a.work.left as f32/a.dpi,a.work.top as f32/a.dpi,(a.work.right-a.work.left) as f32/a.dpi,(a.work.bottom-a.work.top) as f32/a.dpi);
         self.items=paint::arrange(&self.gfx,&self.bubbles,&input,a.tip,work,now,self.motion,a.dpi)?;
         paint::place_edge(&mut self.items,a.tip,work,a.edge);
-        if self.reminder.is_some(){super::super::remind::place(&mut self.items,work,a.edge);}
-        let buttons=self.reminder.as_ref().is_some_and(|(notice,_)|!notice.single_id().is_empty());
-        self.placement.apply(&mut self.items,a.work,a.dpi,self.bubbles.phase==Phase::Input,buttons);
+        self.placement.apply(&mut self.items,a.work,a.dpi,self.bubbles.phase==Phase::Input,false);
         let spinner_foot=paint::spinner_foot(a.foot,a.tip,a.scale,work,a.edge);
         if let Some(o)=&mut self.overlay {
             let thinking=self.bubbles.phase==Phase::Thinking;
@@ -153,7 +146,6 @@ impl Engine {
                 o.surface.window.front(true);
                 let mut bounds=self.items.iter().fold(None,|r:Option<D2D_RECT_F>,i|Some(match r{None=>i.bounds,Some(r)=>D2D_RECT_F{left:r.left.min(i.bounds.left),top:r.top.min(i.bounds.top),right:r.right.max(i.bounds.right),bottom:r.bottom.max(i.bounds.bottom)}})).unwrap_or(paint::rect(a.tip.0,a.tip.1,1.,1.));
                 if thinking {let(p,r,d)=super::bubbles::spinner(spinner_foot,a.scale);bounds.left=bounds.left.min(p.0-r-d);bounds.right=bounds.right.max(p.0+r+d);bounds.top=bounds.top.min(p.1-r-d);bounds.bottom=bounds.bottom.max(p.1+r+d);}
-                if self.reminder.as_ref().is_some_and(|(notice,_)|!notice.single_id().is_empty()){if let Some(i)=self.items.first(){let r=super::super::remind::bounds(i.bounds);bounds.left=bounds.left.min(r[0].left);bounds.right=bounds.right.max(r[1].right);bounds.bottom+=30.;}}
                 let x=((bounds.left-4.)*a.dpi).floor() as i32;let y=((bounds.top-4.)*a.dpi).floor() as i32;
                 let size=((((bounds.right+4.)*a.dpi).ceil() as i32-x).max(1) as u32,(((bounds.bottom+4.)*a.dpi).ceil() as i32-y).max(1) as u32);
                 if size!=o.size {o.surface.resize(size.0,size.1)?;o.size=size;}
@@ -165,7 +157,6 @@ impl Engine {
                 o.surface.raster.custom(a.dpi,o.surface.window.pixels_mut(),|dc|{
                     dc.SetTransform(&(render::translate(-o.origin.0,-o.origin.1)*render::scale(a.dpi,a.dpi)));
                     for item in &self.items {paint::item(dc,item,(item.depth==0 && self.bubbles.phase==Phase::Input).then_some(&input),caret_visible,theme)?;}
-                    if let (Some((notice,at)),Some(i))=(&self.reminder,self.items.first()){if !notice.single_id().is_empty(){super::super::remind::buttons(dc,&self.gfx,i.bounds,now-at,theme)?;}}
                     if thinking {paint::spinner(dc,spinner_foot,a.scale,now-self.bubbles.entered,self.motion,theme)?;}Ok(())
                 })?;o.surface.window.present(x,y,true)?;
                 if self.bubbles.phase==Phase::Input && self.focused==Some(o.surface.window.hwnd) {
@@ -224,36 +215,15 @@ pub fn above_sprite(sprite:HWND) {
 }
 pub fn open() {super::recheck_on_click();if !super::connected(){return;}fallback_anchor();with_engine(|e|unsafe{let _=e.open();});super::super::refresh();}
 pub fn open_history() {fallback_anchor();with_engine(|e|unsafe{let _=e.history();});super::super::refresh();}
-pub fn say(text:String) { let _=say_queued(text); }
-/// Confirms insertion into the local say queue; never invokes a provider.
-pub fn say_queued(text:String)->bool {
-    let mut queued=false;
-    fallback_anchor();with_engine(|e|unsafe{
-        e.say_queue.push(text);queued=true;
-        if e.overlay().is_ok(){let _=e.draw();}
-    });queued
-}
-pub fn reminder(notice:Notice)->bool {
-    if super::super::remind::delivery()!=crate::notes::reminders::Delivery::Bubble {return false;}
-    fallback_anchor();let mut shown=false;with_engine(|e|unsafe{
-        if e.active()||e.reminder.is_some()||e.bubbles.phase!=Phase::Hidden{return;}
-        let now=e.now();e.allowed=true;e.reminder_wait=false;e.bubbles.cancel();e.bubbles.say(notice.text.clone(),now);
-        e.bubbles.reminder=true;e.bubbles.lifetime=60.;e.reminder=Some((notice,now));
-        if e.overlay().is_ok()&&e.draw().is_ok()&&e.overlay.as_ref().is_some_and(|o|IsWindowVisible(o.surface.window.hwnd).as_bool()) {shown=true;}
-        else {e.reminder=None;e.bubbles.cancel();}
-    });shown
-}
-pub fn cancel_reminders(ids:&[String]) {
-    with_engine(|e|unsafe {
-        if e.reminder.as_ref().is_some_and(|(n,_)|n.ids.iter().any(|id|ids.contains(id))) {
-            let(mut n,_)=e.reminder.take().unwrap();n.ids.retain(|id|!ids.contains(id));
-            if !n.ids.is_empty(){super::super::remind::enqueue_bubble(n);}
-            e.bubbles.cancel();let _=e.draw();
-        }
+pub fn say(text: String) {
+    fallback_anchor();
+    with_engine(|e| unsafe {
+        e.say_queue.push(text);
+        if e.overlay().is_ok() { let _=e.draw(); }
     });
 }
 pub fn shutdown() {
-    ENGINE.with(|e|{if let Ok(mut e)=e.try_borrow_mut(){if let Some(e)=e.as_mut(){unsafe{e.restore();}e.cancel();if let Some((notice,_))=e.reminder.take(){let _ = notice;}e.reminder_wait=false;e.bubbles.cancel();e.history_view=None;e.overlay=None;}}});ACTIVE.with(|a|a.set(false));
+    ENGINE.with(|e|{if let Ok(mut e)=e.try_borrow_mut(){if let Some(e)=e.as_mut(){unsafe{e.restore();}e.cancel();e.bubbles.cancel();e.history_view=None;e.overlay=None;}}});ACTIVE.with(|a|a.set(false));
 }
 /// Monitor relocation closes only presentation, preserving transport and drafts.
 pub fn close_panels() {
@@ -267,7 +237,6 @@ pub(super) fn configure(keep:bool) {
 }
 pub fn frame()->Option<String> {
     ENGINE.with(|e|{let e=e.try_borrow().ok()?;let e=e.as_ref()?;let phase=e.bubbles.phase;
-        if phase==Phase::Hidden&&e.reminder_wait{return Some("wait_0".into());}
         if phase==Phase::Reply && e.bubbles.agent || phase==Phase::Hidden && !e.history_focused(){return None;}
         let error=phase==Phase::Reply && e.chat.error.is_some() && e.bubbles.finished.is_some_and(|at|e.now()-at<super::super::clips::catalog().clip("error").duration() as f64);
         let clip=if error{"error"}else if phase==Phase::Thinking{"think"}else if phase==Phase::Reply{"wait"}else{return Some("look_4".into());};
@@ -298,8 +267,7 @@ unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT {
         if m==WM_NCHITTEST && is_overlay {
             let dpi=ANCHOR.with(Cell::get)?.dpi;
             let x=(l.0&0xffff) as i16 as f32/dpi;let y=((l.0>>16)&0xffff) as i16 as f32/dpi;
-            let buttons=e.reminder.as_ref().is_some_and(|(notice,_)|!notice.single_id().is_empty())&&e.items.first().is_some_and(|i|super::super::remind::bounds(i.bounds).iter().any(|r|paint::contains(*r,x,y)));
-            return Some(LRESULT(if buttons||e.items.iter().any(|i|paint::hit_item(i,x,y)){HTCLIENT as isize}else{HTTRANSPARENT as isize}));
+            return Some(LRESULT(if e.items.iter().any(|i|paint::hit_item(i,x,y)){HTCLIENT as isize}else{HTTRANSPARENT as isize}));
         }
         if m==WM_NCHITTEST && is_history {
             let mut p=POINT{x:(l.0&0xffff) as i16 as i32,y:((l.0>>16)&0xffff) as i16 as i32};let _=ScreenToClient(h,&mut p);
@@ -326,11 +294,7 @@ unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT {
                 return None;
             }
             WM_TIMER=>{
-                if !crate::notes::preferences().notes_reminders&&e.reminder.take().is_some(){e.bubbles.cancel();}
-                if e.reminder.as_ref().is_some_and(|(_,at)|e.now()-at>=60.){let(notice,_)=e.reminder.take().unwrap();crate::notes::runtime::action(crate::notes::runtime::Action::Missed(notice.ids));e.bubbles.cancel();e.reminder_wait=true;}
                 e.sync_account();e.receive();e.allowed=crate::dock::companion_mode()==super::super::visibility::Mode::Run && super::super::visible() && !super::super::living::away();
-                if e.reminder.is_some()&&super::super::remind::delivery()==crate::notes::reminders::Delivery::Defer{e.allowed=false;}
-                if !e.allowed {if let Some((notice,_))=e.reminder.take(){let _ = notice;e.bubbles.cancel();}}
                 let mut p=POINT::default();let _=GetCursorPos(&mut p);
                 if let Some(a)=ANCHOR.with(Cell::get){let inside=e.items.iter().any(|i|paint::contains(i.bounds,p.x as f32/a.dpi,p.y as f32/a.dpi));e.bubbles.hover(inside,e.now());}e.bubbles.tick(e.now(),e.motion);
             }
@@ -374,9 +338,7 @@ unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT {
                     }
                 }else {
                     let o=e.overlay.as_ref().unwrap();x+=o.origin.0;y+=o.origin.1;
-                    if let (Some((notice,at)),Some(item))=(&e.reminder,e.items.first()){
-                        if e.now()-at>=0.06&&super::super::remind::click(notice.single_id(),item.bounds,x,y){e.reminder=None;e.bubbles.cancel();let _=e.draw();return Some(LRESULT(0));}
-                    }
+
                     if let Some(it)=e.items.iter().find(|i|paint::hit_item(i,x,y)) {
                         if editing && it.depth==0 {
                             let at=it.text.hit((x-it.bounds.left)/it.scale-super::bubbles::PAD_X,(y-it.bounds.top)/it.scale-super::bubbles::PAD_Y);

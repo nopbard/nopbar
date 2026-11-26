@@ -367,6 +367,25 @@ fn known_rect() -> Option<RECT> {
     Some(RECT { left: r.0, top: r.1, right: r.2, bottom: r.3 })
 }
 
+pub(crate) fn companion_news_anchor(allow_cursor: bool) -> Option<(crate::companion::SlotAnchor, RECT)> {
+    use windows::Win32::Graphics::Gdi::{MonitorFromRect, MONITOR_DEFAULTTONEAREST};
+    let icon = ADDED.load(Ordering::SeqCst).then(known_rect).flatten();
+    let (rect, monitor) = if let Some(icon) = icon {
+        let handle = unsafe { MonitorFromRect(&icon, MONITOR_DEFAULTTONEAREST) };
+        let monitor = crate::monitors::info(handle.0 as isize)?;
+        (tray_anchor(icon, monitor.rect, monitor.work).0, monitor)
+    } else {
+        if !allow_cursor {
+            return None;
+        }
+        let monitor = crate::monitors::under_cursor().or_else(crate::monitors::primary)?;
+        let mut cursor = POINT::default();
+        unsafe { GetCursorPos(&mut cursor) }.ok()?;
+        (RECT { left: cursor.x, top: cursor.y, right: cursor.x + 1, bottom: cursor.y + 1 }, monitor)
+    };
+    Some((crate::companion::SlotAnchor { rect, dpi: monitor.scale() }, monitor.work))
+}
+
 /// Pure: what the stats panel hangs from for our icon at `icon` (screen
 /// px) in Windows' notification area, on monitor `mon` with work area
 /// `work`, and whether it opens upward (the icon in the monitor's lower

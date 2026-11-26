@@ -152,7 +152,8 @@ fn cards(stage: &kit::Stage, root: &Path, theme: &Theme, wallpaper_light: bool, 
         0,
     )
     .unwrap();
-    for (name, card) in [("card-today", today), ("card-wrap", wrap)] {
+    let reminder = remind::card(&crate::notes::reminders::Notice::single("fixture".into(), "회의 자료 공유".into()));
+    for (name, card) in [("card-today", today), ("card-wrap", wrap), ("reminder", reminder)] {
         save(
             paint_card(stage, &card, theme, wallpaper_light, size),
             root,
@@ -204,7 +205,6 @@ fn bubbles(stage: &kit::Stage, root: &Path, theme: &Theme, wallpaper_light: bool
     let ink = glass::theme_for(theme, Some(&under));
     assert_eq!(ink.is_light, wallpaper_light);
     for (name, frame) in [
-        ("reminder", "wait_0"),
         ("chat", "idle_0"),
         ("thinking", "think_2"),
     ] {
@@ -212,29 +212,17 @@ fn bubbles(stage: &kit::Stage, root: &Path, theme: &Theme, wallpaper_light: bool
         let tip = hat(&pose, size);
         let canvas = canvas(stage, wallpaper_light);
         let mut bubbles = Bubbles::default();
-        if name == "reminder" {
-            bubbles.say("회의 자료 공유".into(), 0.);
-            bubbles.reminder = true;
-        } else {
-            bubbles.input(0.);
-            bubbles.submit(text.into(), 0.);
-            if name == "chat" {
-                bubbles.delta("오전 9시에 제품 검토가 있어.", 0.);
-                bubbles.finish(0.);
-            }
+        bubbles.input(0.);
+        bubbles.submit(text.into(), 0.);
+        if name == "chat" {
+            bubbles.delta("오전 9시에 제품 검토가 있어.", 0.);
+            bubbles.finish(0.);
         }
-        let mut items =
-            paint::arrange(&stage.gfx, &bubbles, &input, tip, work, 1., false, 1.).unwrap();
-        if bubbles.reminder {
-            remind::place(&mut items, work, None);
-        }
+        let items = paint::arrange(&stage.gfx, &bubbles, &input, tip, work, 1., false, 1.).unwrap();
         body(&canvas, &pose, size, theme.is_light);
         unsafe {
             for item in &items {
                 paint::item(&canvas.dc, item, None, false, ink).unwrap();
-            }
-            if bubbles.reminder {
-                remind::buttons(&canvas.dc, &stage.gfx, items[0].bounds, 1., ink).unwrap();
             }
             if name == "thinking" {
                 let foot = Anchors::spinner_foot(&pose, BODY.0, BODY.1, size);

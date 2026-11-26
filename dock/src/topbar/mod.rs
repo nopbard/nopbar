@@ -14,6 +14,7 @@ pub mod control;
 mod access;
 mod companion;
 pub use companion::{companion_obstacles, companion_anchor, companion_changed, companion_agenda, companion_tip, companion_slot_at, companion_tooltip_changed};
+pub use companion::{companion_news_anchor, companion_news_bounce};
 pub(crate) mod baseline;
 mod capsule;
 pub(crate) mod caption;
@@ -884,7 +885,8 @@ fn window_monitor(h: isize) -> Option<isize> {
 /// never hidden: a wrong guess leaves it under one window, not gone.
 /// False if the bars were busy (the caller checks again later).
 pub fn refresh_fullscreen() -> bool {
-    for_each_bar(|b| unsafe {
+    let mut changed = false;
+    let checked = for_each_bar(|b| unsafe {
         let full = crate::dock::fullscreen_on_monitor(b.hmon, b.monitor);
         if full == b.hidden_full {
             // Left under a normal window although topmost: back on top
@@ -895,6 +897,7 @@ pub fn refresh_fullscreen() -> bool {
             return;
         }
         b.hidden_full = full;
+        changed = true;
         if full {
             b.drop_tip();
         }
@@ -905,7 +908,11 @@ pub fn refresh_fullscreen() -> bool {
         b.island_refresh();
         // And the clock's seconds (back on the second when uncovered).
         b.tick_clock();
-    })
+    });
+    if changed {
+        crate::companion::refresh();
+    }
+    checked
 }
 
 /// Someone can see the bars again, or no one can (the session locked,
@@ -1206,6 +1213,8 @@ fn status_cells(full: bool, wifi: bool, volume: bool, battery: bool) -> Vec<Cell
 /// to its first `#[cfg(test)]`.
 #[cfg(test)]
 mod promo;
+#[cfg(test)]
+pub(crate) use companion::paint_home as paint_companion_home;
 
 /// Snapshot adapter for the production tooltip, without creating a window.
 #[cfg(test)]

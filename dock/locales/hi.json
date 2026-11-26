@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "डिवाइस बैटरी.",
   "widgets.device_battery_alerts.hint": "बैटरी 20% या उससे कम होने पर सूचना",
   "widgets.add": "विजेट जोड़ें",
+  "assistant.news": "ख़बरें",
+  "assistant.news_unread": "ख़बरें {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "Geräteakku.",
   "widgets.device_battery_alerts.hint": "Benachrichtigung bei 20 % Akkuladung oder weniger",
   "widgets.add": "Widgets hinzufügen",
+  "assistant.news": "Neuigkeiten",
+  "assistant.news_unread": "Neuigkeiten {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

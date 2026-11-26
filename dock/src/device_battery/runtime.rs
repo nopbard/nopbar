@@ -224,11 +224,11 @@ pub fn shutdown() {
     }
 }
 pub fn tick() {
-    let ready = APP.with(|cell| {
+    APP.with(|cell| {
         let Ok(mut cell) = cell.try_borrow_mut() else {
-            return false;
+            return;
         };
-        let Some(a) = cell.as_mut() else { return false };
+        let Some(a) = cell.as_mut() else { return };
         if a.reader.tick(&mut a.source, &mut a.model, now()) {
             a.dirty = true;
             a.pending_save = true;
@@ -238,6 +238,9 @@ pub fn tick() {
             a.finish_edit(true);
             a.desk = desk;
             a.dirty = true;
+        }
+        for id in crate::companion::device_battery::take_delivered() {
+            a.pending_save |= a.model.acknowledge(&id);
         }
         let prefs = a.model.desktops.get(&a.desk).cloned().unwrap_or_default();
         let valid: Vec<_> = a
@@ -252,7 +255,8 @@ pub fn tick() {
             if let Some(d) = a.model.devices.get(&id) {
                 crate::companion::device_battery::enqueue(
                     id,
-                    format!("{} {}%", prefs.name(d), d.percent.unwrap_or(0)),
+                    prefs.name(d).to_owned(),
+                    d.percent.unwrap_or(0),
                 );
             }
         }
@@ -265,22 +269,7 @@ pub fn tick() {
             }
         }
         a.save();
-        true
     });
-    // A nested tick cannot deliver a notice whose acknowledgement it cannot record.
-    if !ready {
-        return;
-    }
-    if let Some(id) = crate::companion::device_battery::poll() {
-        APP.with(|cell| {
-            if let Ok(mut cell) = cell.try_borrow_mut() {
-                if let Some(a) = cell.as_mut() {
-                    a.pending_save |= a.model.acknowledge(&id);
-                    a.save();
-                }
-            }
-        });
-    }
 }
 pub fn reattach() {
     APP.with(|c| {

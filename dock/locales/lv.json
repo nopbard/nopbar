@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "Ierīču akumulators.",
   "widgets.device_battery_alerts.hint": "Paziņojums pie 20 % akumulatora uzlādes vai mazāk",
   "widgets.add": "Pievienot logrīkus",
+  "assistant.news": "Jaunumi",
+  "assistant.news_unread": "Jaunumi {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

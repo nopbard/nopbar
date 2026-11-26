@@ -110,13 +110,6 @@ pub fn arrange(gfx:&Gfx,b:&Bubbles,input:&Input<'_>,tip:(f32,f32),work:D2D_RECT_
     let mut current_h=0.;
     for (depth,s,user,editing,message) in rows {
         let mut text=Text::new(gfx,s,max,4,editing.then_some(input.caret))?;
-        if b.reminder {unsafe {
-            let range=DWRITE_TEXT_RANGE{startPosition:0,length:s.encode_utf16().count() as u32};
-            text.layout.SetFontSize(15.,range)?;text.layout.SetFontWeight(DWRITE_FONT_WEIGHT_NORMAL,range)?;
-            let mut m=DWRITE_TEXT_METRICS::default();text.layout.GetMetrics(&mut m)?;
-            text.width=(m.widthIncludingTrailingWhitespace.ceil()+2.*PAD_X).clamp(2.*PAD_X+2.,max);
-            text.height=m.lineCount.clamp(1, 4) as f32*LINE+2.*PAD_Y;
-        }}
         if let Some(scroll)=message.and_then(|m|m.scroll.as_ref()) {text.scroll=scroll.value(now,motion).clamp(0.,text.max_scroll);}
         let overflow_done=!editing && text.max_scroll>0. && (depth>0 || b.finished.is_some());
         let (scale,a,lift);

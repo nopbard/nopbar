@@ -32,32 +32,6 @@ pub(crate) fn gnome_fixes_history(stage: &kit::Stage, root: &std::path::Path, sy
 }
 
 #[test]
-#[ignore = "offscreen reminder controls; no screen capture, input or notification delivery"]
-fn native_reminder_buttons() {
-    let _language = crate::i18n::test_lock("ko");
-    let stage = kit::stage();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/ui-snapshots/native-reminder");
-    for scale in [0.28, 0.56] { for light in [true, false] {
-        let cv = kit::Canvas::at(400., 480., 1.);
-        let mut pose = Motion::new(200.).pose(); pose.frame = "idle_0".into();
-        let tip = Anchors::body_tip(&pose);
-        let tip = (200. + tip.0 * scale, 450. + tip.1 * scale);
-        let mut b = Bubbles::default(); b.say("메모 알림".into(), 0.); b.reminder = true;
-        let input = Input { text:"", caret:0, selection:(0,0), composition:None };
-        let mut items = paint::arrange(&stage.gfx, &b, &input, tip, paint::rect(0.,0.,400.,480.), 1., false, 1.).unwrap();
-        crate::companion::remind::place(&mut items, paint::rect(0.,0.,400.,480.), None);
-        unsafe {
-            cv.dc.Clear(Some(&kit::col(kit::harmony_backdrop(light))));
-            render::Painter::new().paint(&cv.dc,&pose,200.,450.,scale,false,0.,1.).unwrap();
-            for item in &items { paint::item(&cv.dc,item,None,true,&kit::theme(light)).unwrap(); }
-            crate::companion::remind::buttons(&cv.dc,&stage.gfx,items[0].bounds,1.,&kit::theme(light)).unwrap();
-        }
-        let (px,w,h) = cv.finish();
-        kit::save_png(&px,w,h,&root.join(format!("{}-{}.png", if light {"light"} else {"dark"}, (scale*100.) as u32)));
-    }}
-}
-
-#[test]
 #[ignore="offscreen bubble acceptance PNGs; no desktop capture, input or provider calls"]
 fn harmony_companion_bubble() {
     let _language=crate::i18n::test_lock("ko");

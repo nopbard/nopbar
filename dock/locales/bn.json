@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "ডিভাইসের ব্যাটারি.",
   "widgets.device_battery_alerts.hint": "ব্যাটারি ২০% বা কম হলে বিজ্ঞপ্তি",
   "widgets.add": "উইজেট যোগ করুন",
+  "assistant.news": "খবর",
+  "assistant.news_unread": "খবর {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

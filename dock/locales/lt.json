@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "Įrenginių baterija.",
   "widgets.device_battery_alerts.hint": "Pranešimas, kai baterijos įkrova 20 % arba mažesnė",
   "widgets.add": "Pridėti valdiklių",
+  "assistant.news": "Naujienos",
+  "assistant.news_unread": "Naujienos {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

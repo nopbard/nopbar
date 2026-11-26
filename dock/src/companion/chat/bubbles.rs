@@ -75,7 +75,6 @@ pub struct Bubbles {
     pub hovered: bool,
     pub hover_until: f64,
     pub agent: bool,
-    pub reminder: bool,
     /// When the stack last moved one level up (archive).
     pub shifted: f64,
     /// The bubble pushed past the last level, and when.
@@ -94,7 +93,6 @@ impl Bubbles {
         self.finished.map(|at| (at + self.lifetime).max(self.hover_until + 0.5))
     }
     pub fn input(&mut self, now: f64) {
-        self.reminder=false;
         self.archive(now);
         self.phase = Phase::Input;
         self.agent = false;
@@ -125,7 +123,6 @@ impl Bubbles {
         if self.phase == Phase::Thinking { self.phase = Phase::Hidden; }
     }
     pub fn say(&mut self, text: String, now: f64) {
-        self.reminder=false;
         self.archive(now);
         self.phase = Phase::Reply;
         self.agent = true;

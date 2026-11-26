@@ -1,6 +1,6 @@
 //! Local calendar, session state and the purposeful animation gate.
 use super::{rhythm, App, State};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 
 impl App {
@@ -26,15 +26,13 @@ pub fn away() -> bool {
     SESSION_AWAY.load(std::sync::atomic::Ordering::SeqCst)
 }
 pub fn session_away(away: bool) {
+    super::downloads::presence_changed(away, Instant::now());
     SESSION_AWAY.store(away, std::sync::atomic::Ordering::SeqCst);
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64();
+    let seconds = super::purpose::uptime();
     super::APP.with(|a| {
         if let Some(a) = a.borrow_mut().as_mut() {
-            a.rhythm.away(away, seconds);
-            a.purpose.away(away,super::purpose::uptime());
+            a.rhythm.away(away);
+            if a.purpose.away(away, seconds) { super::news::returned(); }
             a.purpose_due=Instant::now();
         }
     });

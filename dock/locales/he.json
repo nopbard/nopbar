@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "סוללת מכשירים.",
   "widgets.device_battery_alerts.hint": "התראה ב־20% סוללה או פחות",
   "widgets.add": "הוספת וידג׳טים",
+  "assistant.news": "חדשות",
+  "assistant.news_unread": "חדשות {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

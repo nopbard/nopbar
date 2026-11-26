@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "Μπαταρία συσκευών.",
   "widgets.device_battery_alerts.hint": "Ειδοποίηση σε στάθμη 20% ή χαμηλότερη",
   "widgets.add": "Προσθήκη γραφικών στοιχείων",
+  "assistant.news": "Νέα",
+  "assistant.news_unread": "Νέα {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

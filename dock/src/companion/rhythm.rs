@@ -10,7 +10,7 @@ pub struct Rhythm {
     away: bool,
 }
 impl Rhythm {
-    pub fn away(&mut self, away: bool, _now: f64) {
+    pub fn away(&mut self, away: bool) {
         self.away = away;
     }
     #[cfg_attr(not(test), allow(dead_code))]
@@ -40,9 +40,9 @@ mod tests {
         c.minute = 300;
         assert!(r.morning_due(c, None, Some(State::Idle)));
         assert!(!r.morning_due(c, Some(c.date), Some(State::Idle)));
-        r.away(true, 0.);
+        r.away(true);
         assert!(!r.morning_due(c, None, Some(State::Idle)));
-        r.away(false, 8000.);
+        r.away(false);
         assert!(!r.morning_due(c, None, None));
         assert!(r.morning_due(c, None, Some(State::Idle)));
     }

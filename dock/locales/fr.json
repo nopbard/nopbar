@@ -1189,6 +1189,8 @@
   "widgets.device_battery.hint": "Batterie des appareils.",
   "widgets.device_battery_alerts.hint": "Notification à 20 % de batterie ou moins",
   "widgets.add": "Ajouter des widgets",
+  "assistant.news": "Nouvelles",
+  "assistant.news_unread": "Nouvelles {n}",
   "assistant.morning": "Today",
   "assistant.agenda": "Calendar",
   "assistant.reminders": "Reminders",

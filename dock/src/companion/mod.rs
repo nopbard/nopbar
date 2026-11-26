@@ -22,6 +22,8 @@ mod assistant;
 pub(crate) mod downloads;
 pub(crate) mod routine;
 mod card;
+mod card_input;
+mod news;
 mod living;
 mod pacer;
 pub mod peek;
@@ -52,7 +54,7 @@ pub use living::session_away;
 use model::{Config, Model, State};
 use motion::Motion;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     rc::Rc,
     sync::atomic::{AtomicBool, AtomicIsize, Ordering},
     time::Instant,
@@ -81,6 +83,27 @@ static CUES: std::sync::Mutex<Vec<(Cue,Instant)>> = std::sync::Mutex::new(Vec::n
 static CALM: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 static UI_PAUSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static UI_COVERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+thread_local! {static HANDLE:HandleGate=const {HandleGate::new()};}
+
+struct HandleGate {
+    running: RefCell<()>,
+    repeat: Cell<bool>,
+}
+impl HandleGate {
+    const fn new() -> Self {
+        Self { running: RefCell::new(()), repeat: Cell::new(false) }
+    }
+
+    fn run(&self, work: impl FnOnce(), repost: impl FnOnce()) {
+        let Ok(running) = self.running.try_borrow_mut() else {
+            self.repeat.set(true);
+            return;
+        };
+        work();
+        drop(running);
+        if self.repeat.replace(false) { repost(); }
+    }
+}
 thread_local! {static APP:RefCell<Option<App>>=const {RefCell::new(None)};}
 
 pub struct UiPause {cover:bool}
@@ -200,7 +223,8 @@ struct App {
     dock_ground: Option<Ground>,
     ground_due: Instant,
     slot_shown: bool,
-    slot_notice_until: Option<Instant>,
+    news_body: Option<card::Anchor>,
+    news_topbar: bool,
     slot_attention: bool,
     slot_tip: Option<String>,
     deferred: Option<model::Signal>,
@@ -224,7 +248,7 @@ struct App {
 pub fn init(gfx: &Rc<crate::gfx::Gfx>, owner: HWND, cfg: &crate::config::Config) {
     let _=clips::catalog(); // Precompute landmarks before input can render.
     OWNER.store(owner.0 as isize, Ordering::SeqCst);
-    downloads::configure(cfg.companion.enabled&&cfg.companion.download_notifications);
+    downloads::configure(cfg.companion.enabled && cfg.companion.download_notifications);
     chat::session::subscribe(owner);
     chat::configure(&cfg.chat);
     unsafe {SetTimer(Some(owner), chat::cli::TIMER, 15*60*1000, None);}
@@ -234,6 +258,7 @@ pub fn init(gfx: &Rc<crate::gfx::Gfx>, owner: HWND, cfg: &crate::config::Config)
         *a.borrow_mut() = Some(App {
             gfx: gfx.clone(),
             cfg: cfg.companion,
+            news_topbar: cfg.topbar.enabled,
             model: Model::new(now),
             motion: Motion::new(0.0),
             squishy: squishy::Layer::default(),
@@ -259,7 +284,7 @@ pub fn init(gfx: &Rc<crate::gfx::Gfx>, owner: HWND, cfg: &crate::config::Config)
             checkpoint: checkpoint::Checkpoint {at:purpose::uptime() as u64,day:cfg.companion.routine.day},
             grab: grab::Grab::default(),drag_anchor:None,peek:peek::Runtime::default(),peek_drag:None,last_draw:None,rest:None,immediate:false,press:gestures::Press::default(),bubble:bubble::Bubble::default(),pending_save:None,pending_size:None,
             home_monitors:interaction::monitors(),grounds:Vec::new(),deferred:None,
-            dock_ground:None,ground_due:now,slot_shown:cfg.companion.enabled&&cfg.companion.visible,slot_tip:None,slot_notice_until:None,slot_attention:false,
+            dock_ground:None,ground_due:now,slot_shown:cfg.companion.enabled&&cfg.companion.visible,slot_tip:None,news_body:None,slot_attention:false,
             generation: gfx.generation(),
             size: (0, 0),
             timer: None,
@@ -304,13 +329,20 @@ pub fn apply_config(cfg: &crate::config::Config) {
     if !cfg.companion.enabled || !cfg.companion.visible {
         set_capture_target(None);
     }
-    downloads::configure(cfg.companion.enabled&&cfg.companion.download_notifications);
+    downloads::configure(cfg.companion.enabled && cfg.companion.download_notifications);
+    news::retain(|receipt| match receipt {
+        news::Receipt::Morning(_) => cfg.companion.enabled && cfg.companion.morning_briefing,
+        news::Receipt::Wrap(_) => cfg.companion.enabled && cfg.companion.day_wrap,
+        _ => true,
+    });
     chat::configure(&cfg.chat);
     APP.with(|a| {
         if let Some(a) = a.borrow_mut().as_mut() {
             a.retry.reset();
+            a.news_topbar = cfg.topbar.enabled;
             a.wake.configure(a.cfg,cfg.companion);
             if !cfg.companion.enabled {
+                card::close();
                 crate::dock::cancel_companion_toggle();
                 a.grab=grab::Grab::default();
                 a.trip = None;
@@ -350,50 +382,35 @@ pub fn attention() -> bool {
 }
 impl App {
     fn attention(&self, now: Instant) -> bool {
-        self.cfg.enabled && slot_attention(&self.model.signal, self.slot_notice_until,
-            self.cfg.situations && self.reactions.click(now, false).is_some(), now)
+        self.cfg.enabled && slot_attention(&self.model.signal, news::unread() != 0, now)
     }
 }
-fn slot_attention(signal: &model::Signal, until: Option<Instant>, actionable: bool, now: Instant) -> bool {
+fn slot_attention(signal: &model::Signal, unread: bool, now: Instant) -> bool {
     !signal.waits.is_empty()
         || signal.result.is_some_and(|(at, _)| now.saturating_duration_since(at).as_secs_f32() < 4.)
-        || until.is_some_and(|until| now < until)
-        || actionable
+        || unread
 }
 
-/// When a hidden gnome's dot needs another look (ms): the nearest transient
-/// deadline (a result's 4 s, a cue notice), else a slow check while a click
-/// action is offered (those lapse on their own clock); None for agent waits
-/// alone (a change of them refreshes).
-fn slot_wake(signal: &model::Signal, until: Option<Instant>, actionable: bool, now: Instant) -> Option<u32> {
+/// Agent results expire after four seconds. Waits refresh when they change.
+fn slot_wake(signal: &model::Signal, now: Instant) -> Option<u32> {
     let result = signal.result.map(|(at, _)| at + std::time::Duration::from_secs(4));
-    let next = [result, until].into_iter().flatten().filter(|t| *t > now).min();
-    match next {
-        Some(t) => Some((t.saturating_duration_since(now).as_millis() as u32).saturating_add(20).clamp(50, 60_000)),
-        None if actionable => Some(5_000),
-        None => None,
-    }
+    result.filter(|t| *t > now).map(|t| (t.saturating_duration_since(now).as_millis() as u32).saturating_add(20).clamp(50, 60_000))
 }
 
 #[cfg(test)]
 #[test]
-fn home_notice_clears_when_waits_or_transient_notifications_end() {
+fn home_notice_preserves_agent_signals_and_unread_news() {
     use std::time::Duration;
     let now = Instant::now();
     let mut signal = model::Signal::default();
-    assert!(!slot_attention(&signal, None, false, now));
+    assert!(!slot_attention(&signal, false, now));
     signal.waits.push(("agent".into(), now));
-    assert!(slot_attention(&signal, None, false, now));
+    assert!(slot_attention(&signal, false, now));
     signal.waits.clear();
-    assert!(!slot_attention(&signal, None, false, now));
     signal.result = Some((now, false));
-    assert!(slot_attention(&signal, None, false, now + Duration::from_secs(3)));
-    assert!(!slot_attention(&signal, None, false, now + Duration::from_secs(4)));
-    signal.result = None;
-    let end = now + Duration::from_secs(4);
-    assert!(slot_attention(&signal, Some(end), false, now));
-    assert!(!slot_attention(&signal, Some(end), false, end));
-    assert!(slot_attention(&signal, None, true, end));
+    assert!(slot_attention(&signal, false, now + Duration::from_secs(3)));
+    assert!(!slot_attention(&signal, false, now + Duration::from_secs(4)));
+    assert!(slot_attention(&signal, true, now + Duration::from_secs(4)));
 }
 pub fn monitor() -> Option<RECT> {
     APP.with(|a| {
@@ -438,13 +455,34 @@ pub fn paced_tick(generation:u64) {
 pub fn foreground_changed() { crate::notification_state::changed(); window::desktop_changed(); refresh(); }
 pub fn notifications_quiet() -> bool { CALM.load(Ordering::SeqCst) & 2 != 0 || crate::notification_state::quiet() }
 pub fn handle() {
+    HANDLE.with(|guard| guard.run(handle_once, || {
+        // A nested dispatch may have consumed the message associated with PENDING.
+        PENDING.store(false, Ordering::SeqCst);
+        refresh();
+    }));
+}
+#[cfg(test)]
+#[test]
+fn nested_refresh_requests_one_more_handle() {
+    let gate = HandleGate::new();
+    let reposts = Cell::new(0);
+    let repost = || reposts.set(reposts.get() + 1);
+    gate.run(|| {
+        gate.run(|| panic!("nested work"), repost);
+        gate.run(|| panic!("nested work"), repost);
+        assert_eq!(reposts.get(), 0);
+    }, repost);
+    assert_eq!(reposts.get(), 1);
+    gate.run(|| {}, repost);
+    assert_eq!(reposts.get(), 1);
+}
+
+fn handle_once() {
     let quiet = notifications_quiet();
-    remind::poll();
-    assistant::poll();
-    routine::poll();
-    downloads::poll();
     convenience::wake_due();
     convenience::drain();
+    card::dispatch();
+    remind::poll();
     let refreshed = PENDING.swap(false, Ordering::SeqCst);
     let now = Instant::now();
     let signal = if quiet { model::Signal::default() } else { crate::agents::companion_signal(now) };
@@ -453,11 +491,9 @@ pub fn handle() {
     let scheduled=crate::topbar::shutdown::remaining().map(|(g,_)|g);
     let slot = crate::topbar::companion_anchor();
     let mode = crate::dock::companion_mode();
-    let (bounce, changed) = APP.with(|a| {
+    let presentation = APP.with(|a| {
         let mut a = a.borrow_mut();
-        let Some(a) = a.as_mut() else {
-            return (false, false);
-        };
+        let a = a.as_mut()?;
         a.observe_purpose(now, &signal, mode);
         if CAPTURE_REACTION.swap(false,Ordering::SeqCst){a.reactions.accept(Cue::BreakStart,now,a.cfg.visible);if a.peek_home().is_some(){a.peek.notify(a.start.elapsed().as_secs_f64());}}
         if a.cfg.enabled && (a.cfg.visible||a.trip.is_some()) && (refreshed||now>=a.ground_due) {
@@ -473,18 +509,12 @@ pub fn handle() {
         if new_wait && a.motion.state == State::Notify {
             a.motion.restart();
         }
-        let mut bounce = new_wait && a.cfg.enabled && !a.cfg.visible;
         let calm=CALM.load(Ordering::SeqCst);
         a.reactions.calm(Calm::Focus,quiet || a.cfg.situations&&calm&1!=0);
         a.reactions.calm(Calm::Meeting,a.cfg.situations&&calm&2!=0);
         a.reactions.suppress(quiet);
         a.reactions.retain_shutdown(scheduled);
-        let mut cue_notice = false;
-        if a.cfg.enabled&&a.cfg.situations {for (cue,_at) in queued {cue_notice|=a.reactions.accept(cue,now,a.cfg.visible);a.purpose.notice(a.ground.is_some_and(|g|a.motion.x>(g.monitor.left+g.monitor.right) as f32/(2.*g.dpi)));}}
-
-        bounce |= cue_notice;
-        if cue_notice { a.slot_notice_until = Some(now + std::time::Duration::from_secs(4)); }
-        let before = (a.slot_shown, a.slot_attention);
+        if a.cfg.enabled&&a.cfg.situations {for (cue,_at) in queued {a.reactions.accept(cue,now,a.cfg.visible);a.purpose.notice(a.ground.is_some_and(|g|a.motion.x>(g.monitor.left+g.monitor.right) as f32/(2.*g.dpi)));}}
         if let Err(e) = unsafe { a.draw(now, slot, mode) } {
             crate::log!("companion: render failed: {e}");
             a.stop();
@@ -500,34 +530,70 @@ pub fn handle() {
             }
             a.arm(delay);
         }
-        {
-            a.slot_shown = a.cfg.enabled && a.shown;
-            a.slot_attention = a.attention(now);
-            // A hidden gnome has no animation timer: wake once when a transient
-            // dot is due to go (not every 250 ms; agent waits refresh on change).
-            if a.cfg.enabled && !a.shown && a.slot_attention {
-                let actionable = a.cfg.situations && a.reactions.click(now, false).is_some();
-                if let Some(ms) = slot_wake(&a.model.signal, a.slot_notice_until, actionable, now) { a.arm(Some(ms)); }
-            }
-            (bounce, before != (a.slot_shown, a.slot_attention))
+        let motion = timing::motion(a.cfg.animations, a.animations, crate::effects::motion());
+        Some((a.gfx.clone(), a.cfg.enabled, a.news_topbar, a.news_body, expects_news_body(a.cfg), a.light, motion))
+    });
+    let output = presentation.map_or_else(news::Output::default, |(gfx, enabled, topbar, body, body_expected, light, motion)| {
+        let return_inputs_loading = poll_news_sources(enabled, assistant::poll, routine::poll, downloads::poll);
+        news::poll(news::Context { gfx: &gfx, enabled, topbar, body, body_expected, light, motion,
+            return_inputs_loading })
+    });
+    let changed = APP.with(|a| {
+        let mut a = a.borrow_mut();
+        let Some(a) = a.as_mut() else { return false; };
+        let before = (a.slot_shown, a.slot_attention);
+        a.slot_shown = a.cfg.enabled && a.shown;
+        a.slot_attention = a.attention(now);
+        let result = if a.cfg.enabled && !a.shown { slot_wake(&a.model.signal, now) } else { None };
+        let routine = (a.cfg.enabled && !crate::dock::session_idle() && (a.cfg.morning_briefing || a.cfg.day_wrap)).then_some(60_000);
+        let interval = [output.next, result, routine].into_iter().flatten().min();
+        if let Some(ms) = interval { a.arm(Some(a.timer.map_or(ms, |old| old.min(ms)))); }
+        if output.body {
+            a.purpose.notice(false);
+            if a.peek_home().is_some() { a.peek.notify(a.start.elapsed().as_secs_f64()); }
         }
+        before != (a.slot_shown, a.slot_attention)
     });
     flush_state(false);
     let save=APP.with(|a|a.borrow_mut().as_mut().and_then(|a|a.pending_save.take()));
     if let Some((home,visible))=save {if !crate::dock::save_companion_position(home,visible){APP.with(|a|{if let Some(a)=a.borrow_mut().as_mut(){a.pending_save=Some((home,visible));a.arm(Some(50));}});}}
 
-    let greet=APP.with(|a|a.borrow_mut().as_mut().and_then(|a|a.pending_greet.take()));
-    if let Some(date)=greet {if !crate::dock::save_companion_greet(date) {APP.with(|a|{if let Some(a)=a.borrow_mut().as_mut(){a.pending_greet=Some(date);}});}}
+    flush_greet();
     let size=APP.with(|a|a.borrow_mut().as_mut().and_then(|a|a.pending_size.take()));
     if let Some(size)=size {if !crate::dock::set_companion_size(size){APP.with(|a|{if let Some(a)=a.borrow_mut().as_mut(){a.pending_size=Some(size);}});}}
-    if bounce || changed {
-        crate::topbar::companion_changed(bounce);
+    if changed {
+        crate::topbar::companion_changed();
     }
+    if let Some(slot) = output.slot { crate::topbar::companion_news_bounce(slot); }
     let tip=tooltip();
     let tip_changed=APP.with(|a|{let mut a=a.borrow_mut();let Some(a)=a.as_mut()else{return false;};
         let changed=a.slot_tip!=tip;a.slot_tip=tip.clone();changed});
     if tip_changed {crate::topbar::companion_tooltip_changed();}
 }
+
+fn poll_news_sources(
+    enabled: bool,
+    morning: impl FnOnce() -> bool,
+    wrap: impl FnOnce(),
+    downloads: impl FnOnce() -> bool,
+) -> bool {
+    if !enabled {
+        return false;
+    }
+    let morning_loading = morning();
+    wrap();
+    let downloads_loading = downloads();
+    morning_loading || downloads_loading
+}
+
+fn expects_news_body(cfg: Config) -> bool {
+    cfg.enabled && cfg.visible && cfg.snooze_until.is_none()
+}
+
+fn has_news_body(cfg: Config, away: bool, travelling: bool) -> bool {
+    expects_news_body(cfg) && !away && !travelling
+}
+
 impl App {
     fn set_yielding(&mut self, on: bool) {
         if on && !self.yielding { self.yield_motion(); }
@@ -560,7 +626,7 @@ impl App {
     }
     fn stop(&mut self) {
         set_capture_target(None);
-        card::close();
+        self.news_body = None;
         self.hidden_since=None;
         self.fade=visibility::Fade::default();
         self.visible_frame=visibility::Frame::default();
@@ -594,8 +660,9 @@ impl App {
     ) -> windows::core::Result<()> {
         let mut dt = now.saturating_duration_since(self.last).as_secs_f32();
 
-        if chat::busy() && card::restore_allowance(card::interrupt_for_chat(),&mut self.cfg) {
-            self.pending_greet=Some(None);
+        let has_body = has_news_body(self.cfg, living::away(), self.trip.is_some());
+        if !has_body {
+            self.news_body = None;
         }
 
         // Drop device resources even while hidden, before any early return.
@@ -625,6 +692,7 @@ impl App {
         // No stop(): that would destroy the pose and life/gesture state.
         let alpha=self.fade.step(hidden,dt,animated);
         if hidden || self.hidden_since.is_some() {
+            self.news_body = None;
             set_capture_target(None);
             let at=*self.hidden_since.get_or_insert(now);
             self.last=now;
@@ -983,20 +1051,13 @@ impl App {
             motion_enabled,
             edge_home.map(|(edge,_,_)|edge),
         );
-        if !chat::busy()
-            && card::anchor(work, g.dpi, (x+body_tip.0*draw_scale,y+body_tip.1*draw_scale), self.light, motion_enabled) == Some(card::Kind::Morning)
-        {
-            let date = living::local_calendar().date;
-            self.cfg.last_greet = Some(date);
-            self.pending_greet = Some(Some(date));
-        }
+        self.news_body = (self.visible_frame.body && has_body).then_some(card::Anchor::Body {
+            work, dpi: g.dpi, tip: (x + body_tip.0 * draw_scale, y + body_tip.1 * draw_scale),
+        });
         chat::above_sprite(sprite.window.hwnd);
         if pinned {interval=Some(self.peek.interval(seconds_f64,motion_enabled,self.battery));}
         if self.yielding {interval=Some(visibility::rest_interval(animated,self.battery));}
         if !pinned && !self.yielding {interval=squishy::interval(interval,motion_enabled&&self.squishy.moving(),self.battery);}
-        if let Some(card_interval) = card::interval() {
-            interval = Some(interval.map_or(card_interval, |old| old.min(card_interval)));
-        }
         self.arm(interval);
         self.last_draw=Some(interaction::Drawing{pose:p,x,y,scale:draw_scale,dpi:g.dpi});
         if dirty {self.picture = Some(picture);}
@@ -1006,7 +1067,22 @@ impl App {
     }
 }
 /// Saves numeric usage/caps without replaying UI configuration changes.
+fn flush_greet() {
+    let pending = APP.with(|a| a.borrow_mut().as_mut().and_then(|a| a.pending_greet.take()));
+    if let Some(date) = pending {
+        if !crate::dock::save_companion_greet(date) {
+            APP.with(|app| {
+                if let Some(app) = app.borrow_mut().as_mut() {
+                    app.pending_greet = Some(date);
+                    app.arm(Some(app.timer.map_or(50, |ms| ms.min(50))));
+                }
+            });
+        }
+    }
+}
+
 pub(crate) fn flush_state(force: bool) {
+    if force { flush_greet(); }
     let now=purpose::uptime() as u64;
     let state=APP.with(|a| {
         let a=a.borrow();let a=a.as_ref()?;
@@ -1029,6 +1105,7 @@ pub fn shutdown() {
     crate::worker::wait_for_saves(std::time::Duration::from_secs(2));
     downloads::configure(false);
     card::close();
+    news::shutdown();
     chat::shutdown();
     unsafe {
         let _ = KillTimer(
@@ -1122,7 +1199,7 @@ pub fn slot_click_with(action:cues::Click){
 }
 impl App {
  fn tap(&mut self) {
-  if card::dismiss(){return;}
+  if card::tapped_body(){return;}
   chat::recheck_on_click();
   if !self.cfg.enabled||!self.cfg.visible||self.trip.is_some(){return;}
   let now=Instant::now();let seconds=now.saturating_duration_since(self.start).as_secs_f64();
@@ -1197,16 +1274,13 @@ mod slot_wake_tests {
         let now = Instant::now();
         let mut s = model::Signal::default();
         // Agent waits alone: refreshed on change, no polling.
-        assert_eq!(slot_wake(&s, None, false, now), None);
-        // A cue notice 3 s out: one wake just after it.
-        let w = slot_wake(&s, Some(now + Duration::from_secs(3)), false, now).unwrap();
-        assert!((3000..=3100).contains(&w), "{w}");
+        assert_eq!(slot_wake(&s, now), None);
         // A result shown 1 s ago lapses at 4 s: about 3 s from now.
         s.result = Some((now - Duration::from_secs(1), true));
-        let w = slot_wake(&s, None, false, now).unwrap();
+        let w = slot_wake(&s, now).unwrap();
         assert!((2900..=3100).contains(&w), "{w}");
-        // Past deadlines and an offered click: a slow check, never 250 ms.
+        // An expired result needs no new timer.
         s.result = Some((now - Duration::from_secs(10), true));
-        assert_eq!(slot_wake(&s, Some(now - Duration::from_secs(1)), true, now), Some(5_000));
+        assert_eq!(slot_wake(&s, now), None);
     }
 }

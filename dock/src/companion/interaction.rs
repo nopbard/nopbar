@@ -181,7 +181,7 @@ impl App {
     }
     fn close_panels_on_monitor_change(&mut self,monitor:windows::Win32::Foundation::RECT) {
         if self.ground.is_some_and(|g|g.monitor!=monitor) {
-            super::card::close();super::chat::close_panels();self.bubble.dismiss();
+            super::chat::close_panels();self.bubble.dismiss();
         }
     }
     pub(super) unsafe fn move_drag_window(&mut self)->windows::core::Result<()> {

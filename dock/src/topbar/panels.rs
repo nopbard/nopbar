@@ -279,7 +279,7 @@ fn event_time(d: &DayEvent, e: &crate::agenda::ics::Event, clock: &Now) -> Strin
     if d.all_day {
         return t("agenda.all_day").to_string();
     }
-    crate::i18n::date::time(&local_systemtime((clock.to_local)(e.start)))
+    menu_time_local((clock.to_local)(e.start))
 }
 
 /// Local seconds (read as UTC) as a SYSTEMTIME.
@@ -884,7 +884,11 @@ fn schedule_rows(b: &mut Built, pending: super::shutdown::Pending, clock: &dyn F
 
 /// A UTC time (seconds) as the region writes the time of day.
 fn time_of_day(utc: i64) -> String {
-    crate::i18n::date::time(&local_systemtime(crate::agenda::tz::local_from_utc(utc)))
+    menu_time_local(crate::agenda::tz::local_from_utc(utc))
+}
+
+pub(crate) fn menu_time_local(local: i64) -> String {
+    crate::i18n::date::time(&local_systemtime(local))
 }
 
 /// "Recent items" with its submenu: the newest recent files and folders,
