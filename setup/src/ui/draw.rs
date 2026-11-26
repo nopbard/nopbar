@@ -571,8 +571,8 @@ mod tests {
         assert_eq!(parse_path("M 1 2 L 3 4"), None, "only M, C and Z");
         assert_eq!(parse_path("M1,2C3 4 5 6 7 8Z"), Some(vec![Seg::Move(1.0, 2.0), Seg::Cubic([3.0, 4.0, 5.0, 6.0, 7.0, 8.0]), Seg::Close]));
         assert_eq!(parse_path("M 1"), None);
-        // icon.svg has the same mark.
-        let svg = include_str!("../../../assets/brand/icon.svg");
+        // mark.svg has the same mark (icon.svg is the gnome character since 0.1.113).
+        let svg = include_str!("../../../assets/brand/mark.svg");
         assert!(svg.contains(GNOME_HAT) && svg.contains(GNOME_BEARD));
     }
 
